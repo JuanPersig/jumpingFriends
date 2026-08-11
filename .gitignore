@@ -1,0 +1,56 @@
+# Este .gitignore es el estándar que usa Unity para sus propios proyectos
+# (basado en el oficial de github.com/github/gitignore/blob/main/Unity.gitignore).
+# Todo lo de acá son carpetas GENERADAS por el Editor — se recrean solas al
+# abrir el proyecto. Lo único que realmente hay que versionar es el código
+# fuente y los assets (Assets/, Packages/, ProjectSettings/).
+
+# Carpetas generadas por Unity
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+
+# Carpetas generadas por herramientas de asset (ej: Asset Store tools)
+[Aa]ssets/AssetStoreTools*
+
+# Archivos autogenerados
+[Aa]ssets/[Ss]treamingAssets/aa.meta
+[Aa]ssets/[Ss]treamingAssets/aa/*
+
+# Archivos de proyecto de IDEs (Visual Studio / Rider / VSCode) — se
+# regeneran solos a partir del proyecto de Unity, no hace falta versionarlos
+.vs/
+.vscode/
+.idea/
+*.csproj
+*.unityproj
+*.sln
+*.slnx
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# Archivos de crash reports de Unity
+sysinfo.txt
+
+# Builds
+*.apk
+*.aab
+*.unitypackage
+*.app
+
+# Archivos temporales del sistema operativo
+.DS_Store
+Thumbs.db
