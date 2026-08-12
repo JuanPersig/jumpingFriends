@@ -15,7 +15,31 @@ public class RunnerController : MonoBehaviour
     [SerializeField] private float jumpHeight = 1.6f;
     [SerializeField] private float jumpDuration = 0.55f;
 
+    [Header("Perdón de salto (obstáculos bajos)")]
+    // Diagnosticado con logs de frame: el jugador NO salta tarde, salta
+    // TEMPRANO (apenas ve venir el tronco) — el arco de 0.7s termina y
+    // aterriza bien ANTES de llegar físicamente a la posición del Log, y
+    // ahí choca ya parado. Un truco de "adelantar el reloj del salto" (lo
+    // que había antes acá) no arregla esto — hasta lo empeora, porque
+    // acorta el tiempo real que el personaje queda arriba. La solución real
+    // es dar crédito por la intención: si saltaste hace poco, un obstáculo
+    // BAJO (el Log; no la Barrera, que se agacha) no cuenta como choque,
+    // aunque en ese instante ya hayas aterrizado.
+    [Tooltip("Si el jugador saltó hace menos de este tiempo, un obstáculo cuyo " +
+             "borde inferior esté por debajo de Low Obstacle Height Threshold " +
+             "no le hace perder vida, aunque ya haya aterrizado del salto.")]
+    [SerializeField] private float lowObstacleJumpGraceSeconds = 1.2f;
+    [Tooltip("Altura (Y del mundo) por debajo de la cual un obstáculo se considera " +
+             "'bajo' (se salta, ej. el Log) en vez de 'alto' (se agacha, ej. la " +
+             "Barrera). Con la Barrera, saltar SIGUE contando como choque.")]
+    [SerializeField] private float lowObstacleHeightThreshold = 1f;
+
     [Header("Agache")]
+    // OJO: este valor ya NO escala el Transform/la malla visual (ver
+    // comentario grande en ResizeCrouchCollider). Ahora escala solo el
+    // CapsuleCollider.height, para achicar el hitbox y dejar pasar al
+    // jugador bajo obstáculos. La pose agachada la muestra la animación
+    // Crouch_Fwd_Loop, no un achique del modelo.
     [SerializeField] private float crouchHeightScale = 0.5f;
     [SerializeField] private float crouchTransitionDuration = 0.15f;
 
@@ -31,26 +55,17 @@ public class RunnerController : MonoBehaviour
 
     private CapsuleCollider capsule;
     private float originalColliderHeight;
-    private Vector3 originalScale;
+    private float originalColliderCenterY;
     private float groundLocalY;
-    private float crouchYOffset; // cuánto baja el centro para que los "pies" no floten al achicarse
     private Coroutine actionRoutine;
+    private float lastJumpStartTime = -999f;
 
     private void Awake()
     {
         capsule = GetComponent<CapsuleCollider>();
         originalColliderHeight = capsule.height;
-        originalScale = transform.localScale;
+        originalColliderCenterY = capsule.center.y;
         groundLocalY = transform.position.y;
-
-        // El pivot del capsule está en su centro: si solo achicáramos
-        // localScale.y, el personaje se encogería para los dos lados (la
-        // "cabeza" baja Y los "pies" suben, atravesando el piso). Para que
-        // se vea como agacharse de verdad (pies plantados, solo baja la
-        // cabeza), además de achicar la escala bajamos el centro la mitad
-        // de la altura que se pierde.
-        float heightLost = originalColliderHeight * (1f - crouchHeightScale);
-        crouchYOffset = -heightLost / 2f;
 
         // Rigidbody kinemático: lo necesitamos para que OnTriggerEnter
         // funcione de forma confiable, pero movemos al jugador a mano
@@ -108,18 +123,18 @@ public class RunnerController : MonoBehaviour
 
         if (State == PlayerState.Crouching)
         {
-            // Saltando directo desde agachado: restauramos la altura al
+            // Saltando directo desde agachado: restauramos el hitbox al
             // instante (sin transición) para no perder tiempo, y arrancamos
-            // el salto ya mismo.
-            Vector3 scale = transform.localScale;
-            scale.y = originalScale.y;
-            transform.localScale = scale;
-
-            Vector3 pos = transform.position;
-            transform.position = new Vector3(pos.x, groundLocalY, pos.z);
+            // el salto ya mismo. Ya no hay Transform que restaurar (el
+            // agache no toca el Transform, solo el CapsuleCollider).
+            capsule.height = originalColliderHeight;
+            Vector3 center = capsule.center;
+            center.y = originalColliderCenterY;
+            capsule.center = center;
         }
 
         State = PlayerState.Jumping;
+        lastJumpStartTime = Time.time;
         PlayAnimation(jumpClipName);
         RestartRoutine(JumpRoutine());
     }
@@ -130,7 +145,7 @@ public class RunnerController : MonoBehaviour
         if (State != PlayerState.Running) return;
         State = PlayerState.Crouching;
         PlayAnimation(crouchClipName);
-        RestartRoutine(CrouchRoutine());
+        RestartRoutine(ResizeCrouchCollider(originalColliderHeight * crouchHeightScale));
     }
 
     private void HandleStand()
@@ -151,15 +166,12 @@ public class RunnerController : MonoBehaviour
     private IEnumerator JumpRoutine()
     {
         float elapsed = 0f;
+        ApplyJumpHeight(elapsed);
 
         while (elapsed < jumpDuration)
         {
             elapsed += Time.deltaTime;
-            float t = elapsed / jumpDuration;
-            // Sin(t * PI): sube y baja suave, con el pico en t = 0.5 -> arco de salto.
-            float heightOffset = jumpHeight * Mathf.Sin(t * Mathf.PI);
-            Vector3 pos = transform.position;
-            transform.position = new Vector3(pos.x, groundLocalY + heightOffset, pos.z);
+            ApplyJumpHeight(elapsed);
             yield return null;
         }
 
@@ -169,16 +181,18 @@ public class RunnerController : MonoBehaviour
         PlayAnimation(runClipName);
     }
 
-    private IEnumerator CrouchRoutine()
+    // Sin(t * PI): sube y baja suave, con el pico en t = jumpDuration/2 -> arco de salto.
+    private void ApplyJumpHeight(float elapsed)
     {
-        yield return ResizeCrouch(originalScale.y * crouchHeightScale, crouchYOffset);
-        // Se queda en Crouching hasta que llegue HandleStand (el jugador
-        // se paró de nuevo frente a la cámara).
+        float t = Mathf.Clamp01(elapsed / jumpDuration);
+        float heightOffset = jumpHeight * Mathf.Sin(t * Mathf.PI);
+        Vector3 pos = transform.position;
+        transform.position = new Vector3(pos.x, groundLocalY + heightOffset, pos.z);
     }
 
     private IEnumerator StandRoutine()
     {
-        yield return ResizeCrouch(originalScale.y, 0f);
+        yield return ResizeCrouchCollider(originalColliderHeight);
         State = PlayerState.Running;
         PlayAnimation(runClipName);
     }
@@ -193,52 +207,76 @@ public class RunnerController : MonoBehaviour
         animator.CrossFadeInFixedTime(clipName, animationCrossFade);
     }
 
-    // Achica/agranda al jugador en Y (localScale) y compensa la posición
-    // (yOffset, relativo a groundLocalY) para que no flote ni se hunda.
-    // OJO: acá NO tocamos el CapsuleCollider a mano — al escalar el
-    // transform, Unity escala el collider junto con la malla visual
-    // automáticamente. Si además le cambiáramos height/center a mano,
-    // se achicaría el doble.
-    private IEnumerator ResizeCrouch(float targetScaleY, float targetYOffset)
+    // Achica/agranda SOLO el CapsuleCollider (height/center), nunca el
+    // Transform ni la malla visual.
+    //
+    // Antes esto escalaba transform.localScale.y directamente (dejando X/Z
+    // en 1), lo cual hacía DESAPARECER por completo al personaje. Causa
+    // real, confirmada leyendo Assets/Quaternius/UAL1_Standard.fbx.meta
+    // (animationType: 3 = rig Humanoid): el sistema de retargeting Humanoid
+    // de Unity asume escala UNIFORME en el GameObject del Animator (o en
+    // cualquiera de sus padres, como este "player"). Con localScale
+    // no-uniforme (Y != X/Z) el retargeting colapsa la malla. Confirmado
+    // aislando la variable: con crouchHeightScale = 1 (escala uniforme) el
+    // bug desaparecía; con 0.5 volvía, sin importar Bounds/Update When
+    // Offscreen del SkinnedMeshRenderer (esas pistas eran un callejón sin
+    // salida, el problema nunca fue culling).
+    //
+    // La pose agachada ahora la muestra 100% la animación Crouch_Fwd_Loop;
+    // acá solo achicamos el hitbox para que el jugador pueda pasar bajo
+    // obstáculos, manteniendo el borde INFERIOR del collider fijo (mismo
+    // criterio que antes, pero aplicado al collider en vez de al Transform).
+    private IEnumerator ResizeCrouchCollider(float targetHeight)
     {
         float elapsed = 0f;
-        float startScaleY = transform.localScale.y;
-        float startYOffset = transform.position.y - groundLocalY;
+        float startHeight = capsule.height;
+        float startCenterY = capsule.center.y;
+        float targetCenterY = originalColliderCenterY + (targetHeight - originalColliderHeight) / 2f;
 
         while (elapsed < crouchTransitionDuration)
         {
             elapsed += Time.deltaTime;
             float t = elapsed / crouchTransitionDuration;
 
-            Vector3 scale = transform.localScale;
-            scale.y = Mathf.Lerp(startScaleY, targetScaleY, t);
-            transform.localScale = scale;
-
-            float yOffset = Mathf.Lerp(startYOffset, targetYOffset, t);
-            Vector3 pos = transform.position;
-            transform.position = new Vector3(pos.x, groundLocalY + yOffset, pos.z);
+            capsule.height = Mathf.Lerp(startHeight, targetHeight, t);
+            Vector3 center = capsule.center;
+            center.y = Mathf.Lerp(startCenterY, targetCenterY, t);
+            capsule.center = center;
 
             yield return null;
         }
 
-        Vector3 finalScale = transform.localScale;
-        finalScale.y = targetScaleY;
-        transform.localScale = finalScale;
-
-        Vector3 finalPos = transform.position;
-        transform.position = new Vector3(finalPos.x, groundLocalY + targetYOffset, finalPos.z);
+        capsule.height = targetHeight;
+        Vector3 finalCenter = capsule.center;
+        finalCenter.y = targetCenterY;
+        capsule.center = finalCenter;
     }
 
     private void OnTriggerEnter(Collider other)
     {
-        if (other.CompareTag("Obstacle"))
+        if (!other.CompareTag("Obstacle")) return;
+
+        bool isLowObstacle = other.bounds.min.y < lowObstacleHeightThreshold;
+        bool recentlyJumped = Time.time - lastJumpStartTime <= lowObstacleJumpGraceSeconds;
+
+        if (isLowObstacle && recentlyJumped)
+        {
+            // Perdón de salto: saltaste hace poco y esto es un obstáculo
+            // bajo (se salta, no se agacha) -> no cuenta como choque, aunque
+            // en este instante exacto ya hayas aterrizado. Ver comentario
+            // grande en "Perdón de salto" arriba para el porqué.
+            Debug.Log($"[RunnerController] '{other.name}' esquivado por perdón de salto " +
+                      $"(saltaste hace {Time.time - lastJumpStartTime:F2}s)");
+        }
+        else
         {
             GameManager.Instance?.RegisterObstacleHit();
-            // El obstáculo desaparece al chocarlo: es la señal visual más
-            // simple de "che, pasó algo" sin necesitar todavía una UI de
-            // vidas/daño (eso lo conectamos en la Fase 4, con el resto del
-            // sistema de menús reutilizable).
-            Destroy(other.gameObject);
         }
+
+        // El obstáculo desaparece al chocarlo (o al esquivarlo): es la señal
+        // visual más simple de "che, pasó algo" sin necesitar todavía una UI
+        // de vidas/daño (eso lo conectamos en la Fase 4, con el resto del
+        // sistema de menús reutilizable).
+        Destroy(other.gameObject);
     }
 }

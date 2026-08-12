@@ -8,6 +8,12 @@ public class GameManager : MonoBehaviour
     [Header("Vidas")]
     [SerializeField] private int startingLives = 3;
 
+    [Header("Debug")]
+    [Tooltip("TEMPORAL: tildado, los choques no restan vidas (para poder calibrar cosas " +
+             "como la cámara sin que la partida se corte). Destildar cuando termines de probar " +
+             "— no hace falta tocar código para volver a las 3 vidas normales.")]
+    [SerializeField] private bool infiniteLives = false;
+
     public bool IsGameOver { get; private set; }
     public int Lives { get; private set; }
 
@@ -25,6 +31,12 @@ public class GameManager : MonoBehaviour
     public void RegisterObstacleHit()
     {
         if (IsGameOver) return;
+
+        if (infiniteLives)
+        {
+            Debug.Log("[GameManager] Choque (Infinite Lives activo, no se resta nada).");
+            return;
+        }
 
         Lives = Mathf.Max(0, Lives - 1);
         Debug.Log($"[GameManager] Choque. Vidas restantes: {Lives}");

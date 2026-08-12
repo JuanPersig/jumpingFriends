@@ -1,55 +1,40 @@
 using UnityEngine;
 
-// Cámara detrás del personaje, estilo Temple Run. Sigue con un pequeño
-// suavizado para que no se sienta "pegada" al jugador.
+// Sigue al jugador en X/Z manteniendo una altura de piso estable (ignora
+// el vaivén de saltos/agaches, igual que antes). A PROPÓSITO no controla
+// el ángulo/rotación de la cámara para nada — ese es el cambio clave.
+//
+// Este script va en un GameObject "rig" (vacío, sin cámara). La cámara
+// real es HIJA de ese rig, con la posición/rotación local que le hayas
+// puesto a mano en el Editor (arrastrando/rotando en la Scene view hasta
+// que se vea bien). Como este script nunca toca esa rotación, lo que ves
+// en el Editor es EXACTAMENTE lo que vas a ver en el juego — sin
+// necesidad de calcular offsets a mano ni pelear con un LookAt automático
+// que reinterpreta el ángulo cada frame.
 public class CameraFollow : MonoBehaviour
 {
     [SerializeField] private Transform target;
-    [SerializeField] private Vector3 offset = new Vector3(0f, 3.5f, -6f);
     [SerializeField] private float followSmoothness = 8f;
 
-    // Altura de referencia del jugador "parado" (sin el offset del salto).
-    // RunnerController mueve target.position.y directamente para el arco
-    // del salto (groundLocalY + heightOffset). Si la cámara siguiera esa Y
-    // tal cual, subiría y bajaría CON el jugador en cada salto, y el salto
-    // se ve raro/sin fuerza porque ambos se mueven juntos en vez de que el
-    // jugador suba relativo a una cámara estable. Por eso guardamos la
-    // altura de piso una sola vez al arrancar y la cámara la ignora.
     private float lockedHeight;
     private bool initialized;
-
-    private void Start()
-    {
-        if (target != null)
-        {
-            lockedHeight = target.position.y + offset.y;
-            initialized = true;
-        }
-    }
 
     private void LateUpdate()
     {
         if (target == null) return;
         if (!initialized)
         {
-            lockedHeight = target.position.y + offset.y;
+            lockedHeight = target.position.y;
             initialized = true;
         }
 
-        Vector3 desiredPosition = new Vector3(
-            target.position.x + offset.x,
-            lockedHeight,
-            target.position.z + offset.z);
+        Vector3 desiredPosition = new Vector3(target.position.x, lockedHeight, target.position.z);
 
-        // 1 - e^(-k*dt) en vez de "k*dt" a secas: el Lerp con un factor
-        // crudo no es independiente del framerate (a FPS bajo, k*dt puede
-        // superar 1 y la cámara "teletransportarse" en vez de suavizar,
-        // lo cual se sentía como parte de lo "bugeado"). Esta fórmula da
-        // el mismo suavizado exponencial sin importar el framerate.
+        // Mismo suavizado independiente del framerate que ya usábamos.
         float t = 1f - Mathf.Exp(-followSmoothness * Time.deltaTime);
         transform.position = Vector3.Lerp(transform.position, desiredPosition, t);
 
-        Vector3 lookAtPoint = new Vector3(target.position.x, lockedHeight - offset.y + 1.2f, target.position.z);
-        transform.LookAt(lookAtPoint);
+        // Nada de rotación acá — la cámara (hija de este objeto) mantiene
+        // siempre la rotación local que le pusiste a mano en el Editor.
     }
 }
