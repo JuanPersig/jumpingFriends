@@ -18,6 +18,15 @@ public class UIManager : MonoBehaviour
     [SerializeField] private GameObject gameOverPanel;
     [SerializeField] private TMP_Text finalScoreText;
 
+    // Último valor efectivamente escrito en cada texto, para no reasignar
+    // (ni alocar el string interpolado) cuando el número mostrado no
+    // cambió. El puntaje se muestra redondeado (":0"), así que en la
+    // práctica solo cambia ~1 vez por segundo, no 60 veces — sin este
+    // chequeo estábamos generando basura (GC) todos los frames, para
+    // siempre, por texto que la mayoría de las veces ni cambiaba.
+    private int lastShownLives = int.MinValue;
+    private int lastShownScore = int.MinValue;
+
     private void Start()
     {
         // El panel de Game Over arranca oculto; recién se muestra cuando
@@ -39,12 +48,25 @@ public class UIManager : MonoBehaviour
     {
         if (livesText != null && GameManager.Instance != null)
         {
-            livesText.text = $"Vidas: {GameManager.Instance.Lives}";
+            int lives = GameManager.Instance.Lives;
+            if (lives != lastShownLives)
+            {
+                lastShownLives = lives;
+                livesText.text = $"Vidas: {lives}";
+            }
         }
 
         if (scoreText != null && ScoreManager.Instance != null)
         {
-            scoreText.text = $"Puntaje: {ScoreManager.Instance.CurrentScore:0}";
+            // RoundToInt (no FloorToInt): así redondea igual que el ":0"
+            // que usaba el string interpolado original, sin cambiar el
+            // número que ve el jugador ni un punto.
+            int score = Mathf.RoundToInt(ScoreManager.Instance.CurrentScore);
+            if (score != lastShownScore)
+            {
+                lastShownScore = score;
+                scoreText.text = $"Puntaje: {score}";
+            }
         }
     }
 

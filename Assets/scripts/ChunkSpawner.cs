@@ -41,6 +41,14 @@ public class ChunkSpawner : MonoBehaviour
 
     private void Start()
     {
+        // Un chunk extra ANTES del arranque (Z negativo) -- solo para que
+        // la intro de cámara (GameIntroSequence, que muestra al jugador de
+        // espaldas) no se vea con el vacío atrás. Se despareja solo apenas
+        // el jugador arranca a correr y se aleja lo suficiente
+        // (CleanupBehindPlayer lo trata como a cualquier otro chunk viejo,
+        // no hace falta lógica especial para sacarlo).
+        SpawnChunkAt(-chunkLength);
+
         nextChunkZ = 0f;
         // Generamos varios chunks antes de arrancar, para no empezar con
         // el camino vacío por delante del jugador.
@@ -64,12 +72,25 @@ public class ChunkSpawner : MonoBehaviour
         CleanupBehindPlayer();
     }
 
+    // Spawnea el próximo chunk de la secuencia normal (por delante del
+    // jugador) y avanza nextChunkZ. Para spawnear en un Z puntual fuera de
+    // esa secuencia (ver SpawnChunkAt), usar ese método directo.
     private void SpawnNextChunk()
+    {
+        SpawnChunkAt(nextChunkZ);
+        nextChunkZ += chunkLength;
+    }
+
+    // Instancia un chunk en el Z indicado y lo encastra como vecino del
+    // último chunk spawneado (si trae Terrain). No toca nextChunkZ -- lo
+    // usan tanto SpawnNextChunk (secuencia normal) como el chunk extra de
+    // arranque en Start() (Z negativo, fuera de esa secuencia).
+    private void SpawnChunkAt(float z)
     {
         if (chunkPrefabs == null || chunkPrefabs.Length == 0) return;
 
         GameObject prefab = chunkPrefabs[Random.Range(0, chunkPrefabs.Length)];
-        Vector3 spawnPos = new Vector3(pathX, 0f, nextChunkZ);
+        Vector3 spawnPos = new Vector3(pathX, 0f, z);
         GameObject chunk = Instantiate(prefab, spawnPos, Quaternion.identity);
         activeChunks.Add(chunk);
 
@@ -92,8 +113,6 @@ public class ChunkSpawner : MonoBehaviour
             }
             previousTerrain = currentTerrain;
         }
-
-        nextChunkZ += chunkLength;
     }
 
     private void CleanupBehindPlayer()

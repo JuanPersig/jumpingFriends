@@ -3,8 +3,8 @@ using UnityEngine;
 
 // Mueve al jugador hacia adelante automáticamente (estilo endless runner) y
 // reacciona a los eventos de PlayerInputProvider para saltar/agacharse.
-// Igual que TestCubeReactor en la Fase 0: este script NO sabe nada de
-// cámara, UDP, ni Python. Solo escucha OnJump / OnCrouch / OnStand.
+// Este script NO sabe nada de cámara, UDP, ni Python. Solo escucha
+// OnJump / OnCrouch / OnStand.
 [RequireComponent(typeof(CapsuleCollider))]
 [RequireComponent(typeof(Rigidbody))]
 public class RunnerController : MonoBehaviour
@@ -25,10 +25,16 @@ public class RunnerController : MonoBehaviour
     // es dar crédito por la intención: si saltaste hace poco, un obstáculo
     // BAJO (el Log; no la Barrera, que se agacha) no cuenta como choque,
     // aunque en ese instante ya hayas aterrizado.
-    [Tooltip("Si el jugador saltó hace menos de este tiempo, un obstáculo cuyo " +
-             "borde inferior esté por debajo de Low Obstacle Height Threshold " +
-             "no le hace perder vida, aunque ya haya aterrizado del salto.")]
-    [SerializeField] private float lowObstacleJumpGraceSeconds = 1.2f;
+    // Rango en vez de valor fijo (mismo criterio que minReactionSeconds y
+    // switchTypeChance en ObstacleSpawner): generoso al arrancar, más
+    // estricto a medida que sube la velocidad — atado al mismo
+    // DifficultyManager.Progress01, así el juego no queda "fácil de punta
+    // a punta" solo por tener estos colchones de seguridad.
+    [Tooltip("Perdón de salto (segundos) AL ARRANCAR la partida — el más generoso.")]
+    [SerializeField] private float lowObstacleJumpGraceSecondsEarly = 1.5f;
+    [Tooltip("Perdón de salto (segundos) a velocidad MÁXIMA — el más estricto (exige " +
+             "saltar más cerca del obstáculo de verdad).")]
+    [SerializeField] private float lowObstacleJumpGraceSecondsLate = 0.6f;
     [Tooltip("Altura (Y del mundo) por debajo de la cual un obstáculo se considera " +
              "'bajo' (se salta, ej. el Log) en vez de 'alto' (se agacha, ej. la " +
              "Barrera). Con la Barrera, saltar SIGUE contando como choque.")]
@@ -59,6 +65,18 @@ public class RunnerController : MonoBehaviour
     private float groundLocalY;
     private Coroutine actionRoutine;
     private float lastJumpStartTime = -999f;
+    // Ver HandleCrouch/HandleStand/JumpRoutine: un agache que llega
+    // mientras estamos en el aire se guarda acá en vez de perderse.
+    private bool queuedCrouchOnLanding = false;
+
+    // Hashes de los nombres de clip, calculados UNA sola vez en Awake en
+    // vez de dejar que Animator.CrossFadeInFixedTime(string, ...) rehaga
+    // internamente Animator.StringToHash() cada vez que cambiamos de
+    // animación. 0 = "sin clip asignado" (mismo comportamiento que antes
+    // con string.IsNullOrEmpty, ver PlayAnimation).
+    private int runClipHash;
+    private int jumpClipHash;
+    private int crouchClipHash;
 
     private void Awake()
     {
@@ -66,6 +84,10 @@ public class RunnerController : MonoBehaviour
         originalColliderHeight = capsule.height;
         originalColliderCenterY = capsule.center.y;
         groundLocalY = transform.position.y;
+
+        runClipHash = string.IsNullOrEmpty(runClipName) ? 0 : Animator.StringToHash(runClipName);
+        jumpClipHash = string.IsNullOrEmpty(jumpClipName) ? 0 : Animator.StringToHash(jumpClipName);
+        crouchClipHash = string.IsNullOrEmpty(crouchClipName) ? 0 : Animator.StringToHash(crouchClipName);
 
         // Rigidbody kinemático: lo necesitamos para que OnTriggerEnter
         // funcione de forma confiable, pero movemos al jugador a mano
@@ -76,6 +98,20 @@ public class RunnerController : MonoBehaviour
         rb.useGravity = false;
     }
 
+    // Llamado por PlayerCharacterSpawner cuando reemplaza el modelo
+    // placeholder por el personaje elegido en el menú. La referencia
+    // 'animator' del Inspector, sin esto, seguiría apuntando al modelo
+    // VIEJO (ya destruido) apenas se hace el swap -- el personaje nuevo se
+    // movería bien pero sin animar. Los hashes de clip (runClipHash/
+    // jumpClipHash/crouchClipHash) NO hace falta recalcularlos acá: todos
+    // los personajes del pack Quaternius comparten el mismo Animator
+    // Controller (mismos nombres de estado), solo cambia A QUIÉN se le
+    // aplica el CrossFade.
+    public void SetAnimator(Animator newAnimator)
+    {
+        animator = newAnimator;
+    }
+
     private void Start()
     {
         // Se suscribe en Start(), no en OnEnable(): Unity garantiza que
@@ -83,7 +119,7 @@ public class RunnerController : MonoBehaviour
         // que asigna Instance) corren antes que cualquier Start(). Con
         // OnEnable() eso no está garantizado entre objetos distintos, y es
         // justo lo que hacía que este script se suscribiera a veces y a
-        // veces no (mismo bug que ya habíamos arreglado en TestCubeReactor).
+        // veces no.
         if (PlayerInputProvider.Instance == null)
         {
             Debug.LogError("[RunnerController] No se encontró PlayerInputProvider.Instance. " +
@@ -106,6 +142,8 @@ public class RunnerController : MonoBehaviour
     private void Update()
     {
         if (GameManager.Instance != null && GameManager.Instance.IsGameOver) return;
+        // Pausado hasta que termine la intro de cámara (ver GameIntroSequence).
+        if (GameManager.Instance != null && !GameManager.Instance.HasGameplayStarted) return;
         if (DifficultyManager.Instance == null) return;
 
         transform.position += Vector3.forward * DifficultyManager.Instance.CurrentSpeed * Time.deltaTime;
@@ -113,7 +151,6 @@ public class RunnerController : MonoBehaviour
 
     private void HandleJump()
     {
-        Debug.Log("[RunnerController] JUMP recibido");
         // Solo ignoramos el salto si YA está en el aire (para no reiniciar
         // el arco a mitad de camino). Antes también lo ignorábamos estando
         // agachado, obligando a pasar por un instante "de pie" en el medio
@@ -135,22 +172,41 @@ public class RunnerController : MonoBehaviour
 
         State = PlayerState.Jumping;
         lastJumpStartTime = Time.time;
-        PlayAnimation(jumpClipName);
+        PlayAnimation(jumpClipHash);
         RestartRoutine(JumpRoutine());
     }
 
     private void HandleCrouch()
     {
-        Debug.Log("[RunnerController] CROUCH recibido");
+        if (State == PlayerState.Jumping)
+        {
+            // A velocidad alta puede llegar un agache mientras TODAVÍA
+            // estás en el aire saltando el obstáculo anterior. Antes esto
+            // se perdía para siempre (el jugador ya se agachó en la vida
+            // real, pero acá no pasaba nada) -> se sentía como que el
+            // personaje "dejó de responder". Ahora lo guardamos y se aplica
+            // solo, apenas aterriza (ver el final de JumpRoutine).
+            queuedCrouchOnLanding = true;
+            return;
+        }
+
         if (State != PlayerState.Running) return;
         State = PlayerState.Crouching;
-        PlayAnimation(crouchClipName);
+        PlayAnimation(crouchClipHash);
         RestartRoutine(ResizeCrouchCollider(originalColliderHeight * crouchHeightScale));
     }
 
     private void HandleStand()
     {
-        Debug.Log("[RunnerController] STAND recibido");
+        // Si en la vida real el jugador ya se paró de nuevo antes de que
+        // termine el salto, cancelamos el agache que habíamos guardado —
+        // si no, aterrizaría agachándose por un comando que ya quedó viejo.
+        if (State == PlayerState.Jumping)
+        {
+            queuedCrouchOnLanding = false;
+            return;
+        }
+
         // El salto vuelve solo a Running al terminar su propia corrutina;
         // acá solo nos interesa la transición Crouching -> Running.
         if (State != PlayerState.Crouching) return;
@@ -178,7 +234,16 @@ public class RunnerController : MonoBehaviour
         Vector3 finalPos = transform.position;
         transform.position = new Vector3(finalPos.x, groundLocalY, finalPos.z);
         State = PlayerState.Running;
-        PlayAnimation(runClipName);
+        PlayAnimation(runClipHash);
+
+        if (queuedCrouchOnLanding)
+        {
+            // Ahora sí, State ya es Running: HandleCrouch() sigue su
+            // camino normal (no vuelve a entrar por la rama de "estoy en
+            // el aire" porque ya aterrizamos).
+            queuedCrouchOnLanding = false;
+            HandleCrouch();
+        }
     }
 
     // Sin(t * PI): sube y baja suave, con el pico en t = jumpDuration/2 -> arco de salto.
@@ -194,17 +259,37 @@ public class RunnerController : MonoBehaviour
     {
         yield return ResizeCrouchCollider(originalColliderHeight);
         State = PlayerState.Running;
-        PlayAnimation(runClipName);
+        PlayAnimation(runClipHash);
     }
 
     // CrossFadeInFixedTime (no CrossFade a secas) porque los clips de este
     // pack están pensados en tiempo real/frames, no normalizado 0-1 — así
     // el tiempo de mezcla (animationCrossFade) se respeta igual sin
-    // importar cuán largo sea cada clip.
-    private void PlayAnimation(string clipName)
+    // importar cuán largo sea cada clip. Recibe el HASH precalculado
+    // (ver Awake), no el string, para no rehashear en cada llamada.
+    private void PlayAnimation(int clipHash)
+    {
+        if (animator == null || clipHash == 0) return;
+        animator.CrossFadeInFixedTime(clipHash, animationCrossFade);
+    }
+
+    // Público para GameIntroSequence: muestra un clip por NOMBRE (no hash
+    // precalculado, porque este no es uno de los 3 que ya cachea Awake) --
+    // se usa una sola vez al arrancar la partida, así que rehashear acá no
+    // importa. El nombre tiene que coincidir con un estado que ya exista en
+    // el Animator Controller (agregalo ahí si hace falta, Unity no lo crea solo).
+    public void PlayCustomAnimation(string clipName)
     {
         if (animator == null || string.IsNullOrEmpty(clipName)) return;
-        animator.CrossFadeInFixedTime(clipName, animationCrossFade);
+        animator.CrossFadeInFixedTime(Animator.StringToHash(clipName), animationCrossFade);
+    }
+
+    // Público para GameIntroSequence: vuelve a la animación de correr
+    // normal al terminar la intro (por si PlayCustomAnimation puso otra
+    // distinta, ej. una pose de reposo).
+    public void ResumeRunAnimation()
+    {
+        PlayAnimation(runClipHash);
     }
 
     // Achica/agranda SOLO el CapsuleCollider (height/center), nunca el
@@ -256,19 +341,18 @@ public class RunnerController : MonoBehaviour
     {
         if (!other.CompareTag("Obstacle")) return;
 
+        float progress01 = DifficultyManager.Instance != null ? DifficultyManager.Instance.Progress01 : 0f;
+        float lowObstacleJumpGraceSeconds = Mathf.Lerp(lowObstacleJumpGraceSecondsEarly, lowObstacleJumpGraceSecondsLate, progress01);
+
         bool isLowObstacle = other.bounds.min.y < lowObstacleHeightThreshold;
         bool recentlyJumped = Time.time - lastJumpStartTime <= lowObstacleJumpGraceSeconds;
 
-        if (isLowObstacle && recentlyJumped)
-        {
-            // Perdón de salto: saltaste hace poco y esto es un obstáculo
-            // bajo (se salta, no se agacha) -> no cuenta como choque, aunque
-            // en este instante exacto ya hayas aterrizado. Ver comentario
-            // grande en "Perdón de salto" arriba para el porqué.
-            Debug.Log($"[RunnerController] '{other.name}' esquivado por perdón de salto " +
-                      $"(saltaste hace {Time.time - lastJumpStartTime:F2}s)");
-        }
-        else
+        // Perdón de salto: si saltaste hace poco y esto es un obstáculo bajo
+        // (se salta, no se agacha), NO cuenta como choque, aunque en este
+        // instante exacto ya hayas aterrizado. Ver comentario grande en
+        // "Perdón de salto" arriba para el porqué.
+        bool dodgedByJumpGrace = isLowObstacle && recentlyJumped;
+        if (!dodgedByJumpGrace)
         {
             GameManager.Instance?.RegisterObstacleHit();
         }
@@ -277,6 +361,18 @@ public class RunnerController : MonoBehaviour
         // visual más simple de "che, pasó algo" sin necesitar todavía una UI
         // de vidas/daño (eso lo conectamos en la Fase 4, con el resto del
         // sistema de menús reutilizable).
-        Destroy(other.gameObject);
+        //
+        // OPTIMIZACIÓN: lo devolvemos al pool de ObstacleSpawner (se
+        // desactiva y se reutiliza) en vez de Destroy() — ver comentario
+        // grande en ObstacleSpawner.cs. Si por algún motivo el spawner no
+        // existe (no debería pasar en el juego real), Destroy() como plan B.
+        if (ObstacleSpawner.Instance != null)
+        {
+            ObstacleSpawner.Instance.ReturnObstacle(other.gameObject);
+        }
+        else
+        {
+            Destroy(other.gameObject);
+        }
     }
 }

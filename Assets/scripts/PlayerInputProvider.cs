@@ -5,7 +5,6 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using UnityEngine;
-using UnityEngine.InputSystem;
 
 // Formato del mensaje que manda el emisor de Python: {"state": "jumping"}
 [System.Serializable]
@@ -20,20 +19,10 @@ public class StateMessage
 // El día que se agregue multijugador online, esta clase es la única que
 // cambia (la fuente del evento pasa de ser UDP local a ser la red), y
 // ningún minijuego necesita tocarse.
-public class PlayerInputProvider : MonoBehaviour
+public class PlayerInputProvider : Singleton<PlayerInputProvider>
 {
-    public static PlayerInputProvider Instance { get; private set; }
-
     [Header("Configuración de red")]
     [SerializeField] private int listenPort = 5555;
-
-    [Header("Input de teclado (provisorio, para probar sin cámara)")]
-    [SerializeField] private bool enableKeyboardTestInput = true;
-    // Key (Input System nuevo), no KeyCode (Input Manager viejo) — este
-    // proyecto tiene "Active Input Handling" en Input System Package, así
-    // que la clase UnityEngine.Input clásica tira una excepción.
-    [SerializeField] private Key jumpKey = Key.Space;
-    [SerializeField] private Key crouchKey = Key.C;
 
     public event Action OnJump;
     public event Action OnCrouch;
@@ -50,15 +39,10 @@ public class PlayerInputProvider : MonoBehaviour
     private readonly Queue<string> pendingMessages = new Queue<string>();
     private readonly object queueLock = new object();
 
-    private void Awake()
+    protected override void Awake()
     {
-        // Singleton simple: si ya existe una instancia, esta se destruye.
-        if (Instance != null && Instance != this)
-        {
-            Destroy(gameObject);
-            return;
-        }
-        Instance = this;
+        base.Awake();
+        if (Instance != this) return; // instancia duplicada, ya se está autodestruyendo
         DontDestroyOnLoad(gameObject);
     }
 
@@ -93,10 +77,6 @@ public class PlayerInputProvider : MonoBehaviour
                 byte[] data = udpClient.Receive(ref remoteEndPoint);
                 string json = Encoding.UTF8.GetString(data);
 
-                // DIAGNÓSTICO TEMPORAL: confirma si el hilo de escucha
-                // realmente recibe algo, antes de cualquier parseo.
-                Debug.Log($"[PlayerInputProvider][DEBUG] Paquete crudo recibido de {remoteEndPoint}: {json}");
-
                 lock (queueLock)
                 {
                     pendingMessages.Enqueue(json);
@@ -111,13 +91,13 @@ public class PlayerInputProvider : MonoBehaviour
                 // cerrando (isListening == false), que ahí sí es el cierre normal.
                 if (isListening)
                 {
-                    Debug.LogError($"[PlayerInputProvider][DEBUG] SocketException inesperada: {se.SocketErrorCode} - {se.Message}");
+                    Debug.LogError($"[PlayerInputProvider] SocketException inesperada: {se.SocketErrorCode} - {se.Message}");
                 }
                 break;
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"[PlayerInputProvider][DEBUG] Error recibiendo paquete: {e.GetType().Name} - {e.Message}");
+                Debug.LogWarning($"[PlayerInputProvider] Error recibiendo paquete: {e.GetType().Name} - {e.Message}");
             }
         }
     }
@@ -137,37 +117,6 @@ public class PlayerInputProvider : MonoBehaviour
         if (json != null)
         {
             ProcessMessage(json);
-        }
-
-        if (enableKeyboardTestInput)
-        {
-            HandleKeyboardTestInput();
-        }
-    }
-
-    // Dispara los MISMOS eventos que la cámara, solo que desde el teclado.
-    // Es a propósito que esté acá (no en RunnerController ni en ningún
-    // minijuego): esta clase es la única fuente de OnJump/OnCrouch/OnStand,
-    // así que agregar otra forma de dispararlos acá no le agrega ninguna
-    // dependencia nueva a nada que ya escuche estos eventos.
-    private void HandleKeyboardTestInput()
-    {
-        if (Keyboard.current == null) return; // no hay teclado conectado
-
-        if (Keyboard.current[jumpKey].wasPressedThisFrame)
-        {
-            OnJump?.Invoke();
-        }
-
-        // "Agachado" es un estado sostenido (no un toque), igual que en la
-        // detección real: mantenido = agachado, soltado = de pie.
-        if (Keyboard.current[crouchKey].wasPressedThisFrame)
-        {
-            OnCrouch?.Invoke();
-        }
-        else if (Keyboard.current[crouchKey].wasReleasedThisFrame)
-        {
-            OnStand?.Invoke();
         }
     }
 

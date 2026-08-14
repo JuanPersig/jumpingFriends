@@ -1,26 +1,42 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-public class GameManager : MonoBehaviour
+public class GameManager : Singleton<GameManager>
 {
-    public static GameManager Instance { get; private set; }
-
     [Header("Vidas")]
     [SerializeField] private int startingLives = 3;
 
     [Header("Debug")]
-    [Tooltip("TEMPORAL: tildado, los choques no restan vidas (para poder calibrar cosas " +
-             "como la cámara sin que la partida se corte). Destildar cuando termines de probar " +
-             "— no hace falta tocar código para volver a las 3 vidas normales.")]
+    [Tooltip("Debug: tildado, los choques no restan vidas (útil para probar cosas — " +
+             "cámara, menú, obstáculos nuevos — sin que la partida se corte). Dejalo " +
+             "destildado para jugar normal; no hace falta tocar código para volver a las 3 vidas.")]
     [SerializeField] private bool infiniteLives = false;
 
     public bool IsGameOver { get; private set; }
     public int Lives { get; private set; }
 
-    private void Awake()
+    // Arranca en false A PROPÓSITO como valor de campo (se aplica antes de
+    // CUALQUIER Awake() de la escena, sin importar el orden real entre
+    // scripts) -- así el juego queda pausado desde el primer frame hasta
+    // que GameIntroSequence llame a BeginGameplay() al terminar la
+    // animación de cámara de arranque. RunnerController/DifficultyManager/
+    // ObstacleSpawner/ScoreManager chequean esto en su propio Update().
+    //
+    // OJO: si alguna vez probás Gameplay.unity sin que exista un
+    // GameIntroSequence en la escena, el juego queda congelado para
+    // siempre (nadie llama a BeginGameplay) -- es a propósito, mejor un
+    // freeze obvio que una intro que a veces no corre sin avisar.
+    public bool HasGameplayStarted { get; private set; } = false;
+
+    public void BeginGameplay()
     {
-        if (Instance != null && Instance != this) { Destroy(gameObject); return; }
-        Instance = this;
+        HasGameplayStarted = true;
+    }
+
+    protected override void Awake()
+    {
+        base.Awake();
+        if (Instance != this) return; // instancia duplicada, ya se está autodestruyendo
         Lives = startingLives;
     }
 
