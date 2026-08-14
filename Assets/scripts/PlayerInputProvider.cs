@@ -28,6 +28,15 @@ public class PlayerInputProvider : Singleton<PlayerInputProvider>
     public event Action OnCrouch;
     public event Action OnStand;
 
+    // Permiten que OTRA fuente de input (ej: NativePoseInputSource, que lee
+    // landmarks de MediaPipe en vez de UDP) dispare los mismos eventos que
+    // consume el resto del juego, sin que RunnerController ni nadie más
+    // necesite enterarse de qué fuente está activa. No reemplazan el UDP de
+    // abajo -- ambas fuentes pueden convivir mientras se valida la migración.
+    public void RaiseJump() => OnJump?.Invoke();
+    public void RaiseCrouch() => OnCrouch?.Invoke();
+    public void RaiseStand() => OnStand?.Invoke();
+
     private UdpClient udpClient;
     private Thread listenThread;
     private volatile bool isListening = false;

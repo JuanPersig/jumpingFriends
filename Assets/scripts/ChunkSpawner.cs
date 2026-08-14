@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -41,6 +42,21 @@ public class ChunkSpawner : MonoBehaviour
 
     private void Start()
     {
+        StartCoroutine(SpawnInitialChunks());
+    }
+
+    // Cada chunk trae ~300 objetos anidados (árboles/rocas/decoración) --
+    // instanciar los 4 chunks iniciales de un tirón en un solo Start()
+    // significaba ~1200 Instantiate() en un solo frame, la causa de la
+    // demora gigante al arrancar (medida en vivo). Repartir uno por frame
+    // convierte eso en pausas chicas o invisibles, sin cambiar el resultado
+    // final: el jugador solo necesita el piso bajo sus pies YA (primer
+    // chunk, spawneado antes del primer yield); los chunks de más adelante
+    // pueden terminar de aparecer en los frames siguientes sin que se note,
+    // porque a la velocidad de arranque faltan varios segundos para llegar
+    // a esa zona.
+    private IEnumerator SpawnInitialChunks()
+    {
         // Un chunk extra ANTES del arranque (Z negativo) -- solo para que
         // la intro de cámara (GameIntroSequence, que muestra al jugador de
         // espaldas) no se vea con el vacío atrás. Se despareja solo apenas
@@ -48,6 +64,7 @@ public class ChunkSpawner : MonoBehaviour
         // (CleanupBehindPlayer lo trata como a cualquier otro chunk viejo,
         // no hace falta lógica especial para sacarlo).
         SpawnChunkAt(-chunkLength);
+        yield return null;
 
         nextChunkZ = 0f;
         // Generamos varios chunks antes de arrancar, para no empezar con
@@ -55,6 +72,7 @@ public class ChunkSpawner : MonoBehaviour
         for (int i = 0; i < chunksAhead; i++)
         {
             SpawnNextChunk();
+            yield return null;
         }
     }
 

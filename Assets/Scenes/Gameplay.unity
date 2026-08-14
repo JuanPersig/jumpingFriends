@@ -1875,6 +1875,8 @@ GameObject:
   m_Component:
   - component: {fileID: 1878825012}
   - component: {fileID: 1878825011}
+  - component: {fileID: 1878825013}
+  - component: {fileID: 1878825014}
   m_Layer: 0
   m_Name: InputManager
   m_TagString: Untagged
@@ -1889,7 +1891,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1878825010}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: ee5a4e271458b414da23cfe3e09493fc, type: 3}
   m_Name: 
@@ -1910,6 +1912,36 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1878825013
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1878825010}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 978634c326f365146ba2ffcec85c4838, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::NativePoseInputSource
+  modelFileName: pose_landmarker_lite.bytes
+  requestedWidth: 320
+  requestedHeight: 240
+  requestedFps: 15
+  minSecondsBetweenDetections: 0.1
+--- !u!114 &1878825014
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1878825010}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 78041843ac0a12b4089a65a903fdbf2d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::FpsCounter
+  updateIntervalSeconds: 0.5
 --- !u!1 &1910339376
 GameObject:
   m_ObjectHideFlags: 0
