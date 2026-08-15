@@ -52,7 +52,7 @@ Terrain:
   m_TreeMaximumFullLODCount: 50
   m_DetailObjectDistance: 50
   m_DetailObjectDensity: 0.6
-  m_HeightmapPixelError: 5
+  m_HeightmapPixelError: 15
   m_SplatMapDistance: 150
   m_HeightmapMinimumLODSimplification: 0
   m_HeightmapMaximumLOD: 0
@@ -358,7 +358,7 @@ Transform:
   m_GameObject: {fileID: 4212106225300817489}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: -0, w: 1}
-  m_LocalPosition: {x: 7.5722346, y: 0.037, z: 216.39091}
+  m_LocalPosition: {x: 7.5722346, y: -0.07, z: 216.4}
   m_LocalScale: {x: 0.7768801, y: 1, z: -39.076237}
   m_ConstrainProportionsScale: 0
   m_Children:

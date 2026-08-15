@@ -249,6 +249,56 @@ public static class TerrainDetailFixer
         Debug.Log($"[TerrainDetailFixer] Inspección (solo lectura) escrita en: {fullOutPath}");
     }
 
+    // REVIERTE el "fix" de detailScatterMode de RunFix (más abajo). Se agregó
+    // el 14/8 apenas se confirmó en el juego real (no en los datos, EN EL
+    // JUEGO) que pasar a CoverageMode dejaba el terreno SIN PASTO -- pasar
+    // detailScatterMode de un modo a otro por la API de Unity NO convierte
+    // los datos de detalle ya pintados, solo cambia cómo se interpretan los
+    // mismos bytes. Este terreno se pintó bajo InstanceCountMode; forzarlo a
+    // CoverageMode sin una conversión real (que la API de script no hace)
+    // deja esos datos en un formato que esa lectura no puede reconstruir.
+    // Volver a InstanceCountMode es la única forma de recuperar el pasto ya
+    // pintado sin re-pintar todo el terreno de cero.
+    public static void RevertDetailScatterToInstanceCount(string terrainDataAssetPath, string outPath)
+    {
+        var sb = new System.Text.StringBuilder();
+        var data = AssetDatabase.LoadAssetAtPath<TerrainData>(terrainDataAssetPath);
+        if (data == null)
+        {
+            sb.AppendLine($"ERROR: no se pudo cargar TerrainData en '{terrainDataAssetPath}'");
+            File.WriteAllText(Path.GetFullPath(outPath), sb.ToString());
+            return;
+        }
+
+        sb.AppendLine($"TerrainData: {terrainDataAssetPath}");
+        sb.AppendLine($"detailScatterMode actual: {data.detailScatterMode}");
+
+        if (data.detailScatterMode != DetailScatterMode.InstanceCountMode)
+        {
+            sb.AppendLine("-> Revirtiendo a InstanceCountMode (el modo bajo el que este terreno fue pintado de verdad).");
+            data.SetDetailScatterMode(DetailScatterMode.InstanceCountMode);
+            EditorUtility.SetDirty(data);
+            AssetDatabase.SaveAssets();
+            sb.AppendLine("Guardado.");
+        }
+        else
+        {
+            sb.AppendLine("-> Ya estaba en InstanceCountMode, no hacía falta revertir.");
+        }
+
+        File.WriteAllText(Path.GetFullPath(outPath), sb.ToString());
+        Debug.Log($"[TerrainDetailFixer] Revert de detailScatterMode escrito en: {outPath}");
+    }
+
+    // OJO (14/8): el cambio automático de detailScatterMode que hacía este
+    // método (más abajo) resultó ser un error práctico, no solo el bug de
+    // nombre que se pensaba -- ver comentario grande en
+    // RevertDetailScatterToInstanceCount. Se dejó de tocar detailScatterMode
+    // acá: ahora solo reporta el valor actual (sin cambiarlo) y sigue
+    // arreglando useInstancing por prototipo, que sí era un fix real y
+    // seguro. Si en algún momento hace falta migrar de verdad a
+    // CoverageMode, hay que hacerlo desde la ventana de Paint Details del
+    // Editor (que sí ofrece convertir los datos pintados), no por script.
     public static void RunFix(string terrainDataAssetPath, string outPath)
     {
         var sb = new System.Text.StringBuilder();
@@ -271,31 +321,13 @@ public static class TerrainDetailFixer
 
         sb.AppendLine("Valores posibles de DetailScatterMode: " + string.Join(", ", System.Enum.GetNames(typeof(DetailScatterMode))));
 
-        // BUG encontrado el 14/8 (causa de "el pasto se ve carguadísimo pase
-        // lo que pase con los sliders de densidad"): esto buscaba, por
-        // reflection, el valor del enum DetailScatterMode que contuviera la
-        // palabra "Instanc" pensando en "instanciado = barato" -- pero el
-        // enum tiene EXACTAMENTE DOS valores, CoverageMode (moderno, el que
-        // corresponde acá) e InstanceCountMode (legacy, pre-2022.2), y el
-        // string-match agarraba el segundo por error. detailScatterMode NO
-        // tiene nada que ver con renderizado instanciado -- eso lo controla
-        // useInstancing por prototipo (más abajo, ese sí estaba bien). Es el
-        // MODELO DE DENSIDAD: el terreno se pintó bajo CoverageMode, y este
-        // bug lo dejó interpretado de golpe como InstanceCountMode -- por
-        // eso ningún control de densidad hacía nada, estaban tocando el
-        // modelo que ya no se estaba usando. Ahora apunta directo a
-        // CoverageMode, sin adivinar por nombre.
+        // Ya NO se toca detailScatterMode acá -- ver comentario grande en
+        // RevertDetailScatterToInstanceCount sobre por qué cambiarlo por
+        // script (aunque el nombre del enum pareciera "el correcto") deja el
+        // terreno sin pasto: la API no convierte los datos ya pintados,
+        // solo cambia cómo se leen los mismos bytes. Esto solo informa el
+        // valor actual, no lo cambia.
         bool changed = false;
-        if (data.detailScatterMode != DetailScatterMode.CoverageMode)
-        {
-            sb.AppendLine("-> Cambiando detailScatterMode a CoverageMode (el modo moderno de densidad -- NO es lo mismo que renderizado instanciado, eso es useInstancing).");
-            data.SetDetailScatterMode(DetailScatterMode.CoverageMode);
-            changed = true;
-        }
-        else
-        {
-            sb.AppendLine("-> Ya estaba en CoverageMode, no hace falta cambiar nada.");
-        }
 
         for (int i = 0; i < data.detailPrototypes.Length; i++)
         {
