@@ -212,6 +212,43 @@ public static class TerrainDetailFixer
         Debug.Log($"[TerrainDetailFixer] Fix de material instanciado escrito en: {outPath}");
     }
 
+    // Puramente de lectura -- a diferencia de RunFix (más abajo), esto NO
+    // toca detailScatterMode ni useInstancing. Se agregó el 14/8 para
+    // diagnosticar "el pasto se ve carguadísimo aunque baje la densidad" sin
+    // arriesgarse a mutar el TerrainData mientras se investiga la causa.
+    public static void InspectDetailScatter(string terrainDataAssetPath, string outPath)
+    {
+        var sb = new System.Text.StringBuilder();
+        var data = AssetDatabase.LoadAssetAtPath<TerrainData>(terrainDataAssetPath);
+        if (data == null)
+        {
+            sb.AppendLine($"ERROR: no se pudo cargar TerrainData en '{terrainDataAssetPath}'");
+            File.WriteAllText(Path.GetFullPath(outPath), sb.ToString());
+            return;
+        }
+
+        sb.AppendLine($"TerrainData: {terrainDataAssetPath}");
+        sb.AppendLine($"detailScatterMode: {data.detailScatterMode}");
+        sb.AppendLine($"detailResolution: {data.detailResolution}");
+        sb.AppendLine($"detailResolutionPerPatch: {data.detailResolutionPerPatch}");
+        sb.AppendLine($"wavingGrassStrength: {data.wavingGrassStrength}");
+        sb.AppendLine($"detailPrototypes: {data.detailPrototypes.Length}");
+        for (int i = 0; i < data.detailPrototypes.Length; i++)
+        {
+            var p = data.detailPrototypes[i];
+            string label = p.prototype != null ? p.prototype.name : (p.prototypeTexture != null ? p.prototypeTexture.name : "(sin asset)");
+            sb.AppendLine($"  [{i}] {label}");
+            sb.AppendLine($"      renderMode={p.renderMode} usePrototypeMesh={p.usePrototypeMesh} useInstancing={p.useInstancing}");
+            sb.AppendLine($"      density={p.density} targetCoverage={p.targetCoverage} useDensityScaling={p.useDensityScaling}");
+            sb.AppendLine($"      minWidth={p.minWidth} maxWidth={p.maxWidth} minHeight={p.minHeight} maxHeight={p.maxHeight}");
+            sb.AppendLine($"      noiseSpread={p.noiseSpread} alignToGround={p.alignToGround} positionJitter={p.positionJitter}");
+        }
+
+        string fullOutPath = Path.GetFullPath(outPath);
+        File.WriteAllText(fullOutPath, sb.ToString());
+        Debug.Log($"[TerrainDetailFixer] Inspección (solo lectura) escrita en: {fullOutPath}");
+    }
+
     public static void RunFix(string terrainDataAssetPath, string outPath)
     {
         var sb = new System.Text.StringBuilder();
@@ -234,26 +271,30 @@ public static class TerrainDetailFixer
 
         sb.AppendLine("Valores posibles de DetailScatterMode: " + string.Join(", ", System.Enum.GetNames(typeof(DetailScatterMode))));
 
+        // BUG encontrado el 14/8 (causa de "el pasto se ve carguadísimo pase
+        // lo que pase con los sliders de densidad"): esto buscaba, por
+        // reflection, el valor del enum DetailScatterMode que contuviera la
+        // palabra "Instanc" pensando en "instanciado = barato" -- pero el
+        // enum tiene EXACTAMENTE DOS valores, CoverageMode (moderno, el que
+        // corresponde acá) e InstanceCountMode (legacy, pre-2022.2), y el
+        // string-match agarraba el segundo por error. detailScatterMode NO
+        // tiene nada que ver con renderizado instanciado -- eso lo controla
+        // useInstancing por prototipo (más abajo, ese sí estaba bien). Es el
+        // MODELO DE DENSIDAD: el terreno se pintó bajo CoverageMode, y este
+        // bug lo dejó interpretado de golpe como InstanceCountMode -- por
+        // eso ningún control de densidad hacía nada, estaban tocando el
+        // modelo que ya no se estaba usando. Ahora apunta directo a
+        // CoverageMode, sin adivinar por nombre.
         bool changed = false;
-        string instancedName = System.Enum.GetNames(typeof(DetailScatterMode))
-            .FirstOrDefault(n => n.IndexOf("Instanc", System.StringComparison.OrdinalIgnoreCase) >= 0);
-        if (instancedName == null)
+        if (data.detailScatterMode != DetailScatterMode.CoverageMode)
         {
-            sb.AppendLine("ERROR: no se encontró un valor de DetailScatterMode que contenga 'Instanc'.");
+            sb.AppendLine("-> Cambiando detailScatterMode a CoverageMode (el modo moderno de densidad -- NO es lo mismo que renderizado instanciado, eso es useInstancing).");
+            data.SetDetailScatterMode(DetailScatterMode.CoverageMode);
+            changed = true;
         }
         else
         {
-            var instancedMode = (DetailScatterMode)System.Enum.Parse(typeof(DetailScatterMode), instancedName);
-            if (data.detailScatterMode != instancedMode)
-            {
-                sb.AppendLine($"-> Cambiando detailScatterMode a {instancedName} (mucho más barato que el modo legacy).");
-                data.SetDetailScatterMode(instancedMode);
-                changed = true;
-            }
-            else
-            {
-                sb.AppendLine($"-> Ya estaba en {instancedName}, no hace falta cambiar nada.");
-            }
+            sb.AppendLine("-> Ya estaba en CoverageMode, no hace falta cambiar nada.");
         }
 
         for (int i = 0; i < data.detailPrototypes.Length; i++)

@@ -230,9 +230,13 @@ public class ObstacleSpawner : Singleton<ObstacleSpawner>
         return obstacle;
     }
 
-    // Llamado desde acá (obstáculo quedó atrás) o desde
-    // RunnerController.OnTriggerEnter (lo chocaste o lo esquivaste con el
-    // perdón de salto) — cualquiera de los dos casos termina acá.
+    // Hoy lo llama solo CleanupBehindPlayer (el obstáculo quedó atrás del
+    // jugador). Antes RunnerController.OnTriggerEnter también lo llamaba al
+    // chocarlo, para hacerlo desaparecer — eso se sacó a propósito: los
+    // obstáculos ahora se quedan en su lugar y el jugador los atraviesa (el
+    // choque se comunica por el HUD de vidas y la animación de Hit_Head, no
+    // haciéndolos desaparecer). Sigue siendo público por si otra cosa
+    // necesita devolver uno al pool.
     public void ReturnObstacle(GameObject obstacle)
     {
         if (obstacle == null || !obstacle.activeSelf) return; // ya fue devuelto antes, no lo encolamos dos veces
@@ -263,11 +267,17 @@ public class ObstacleSpawner : Singleton<ObstacleSpawner>
         {
             GameObject obstacle = activeObstacles[i];
 
-            // null (destruido) o inactivo (ya se devolvió al pool desde
-            // RunnerController al chocarlo/esquivarlo) -> solo sacarlo de
-            // la lista, SIN llamar a ReturnObstacle de nuevo (si no, quedaría
-            // encolado dos veces en el pool, y dos obstáculos "distintos"
-            // futuros terminarían siendo en realidad el mismo GameObject).
+            // null (destruido) o inactivo (ya devuelto al pool por otro
+            // camino) -> solo sacarlo de la lista, SIN llamar a
+            // ReturnObstacle de nuevo (si no, quedaría encolado dos veces en
+            // el pool, y dos obstáculos "distintos" futuros terminarían
+            // siendo en realidad el mismo GameObject).
+            //
+            // Hoy ningún otro camino devuelve obstáculos (ver ReturnObstacle),
+            // así que esta guarda no debería dispararse nunca — se deja igual
+            // porque el costo es un chequeo por frame y el error que evita
+            // (dos obstáculos que son el mismo objeto) es silencioso y muy
+            // molesto de diagnosticar.
             if (obstacle == null || !obstacle.activeSelf)
             {
                 activeObstacles.RemoveAt(i);

@@ -897,7 +897,7 @@ MonoBehaviour:
   crouchClipName: Crouch_Fwd_Loop
   animationCrossFade: 0.08
   hitHeadClipName: Hit_Head
-  hitHeadHoldSeconds: 0.2
+  hitHeadHoldSeconds: 0.25
 --- !u!54 &640943989
 Rigidbody:
   m_ObjectHideFlags: 0

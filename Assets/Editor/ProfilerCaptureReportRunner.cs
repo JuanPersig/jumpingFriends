@@ -28,6 +28,7 @@ public static class ProfilerCaptureReportRunner
         ("run_verify.trigger", (inPath, outPath) => TerrainDetailFixer.VerifyChunkPrefab(inPath, outPath)),
         ("run_inspect_material.trigger", (inPath, outPath) => TerrainDetailFixer.InspectTerrainMaterial(inPath, outPath)),
         ("run_fix_material.trigger", (inPath, outPath) => TerrainDetailFixer.FixInstancedTerrainMaterial(inPath, outPath)),
+        ("run_inspect_detail.trigger", (inPath, outPath) => TerrainDetailFixer.InspectDetailScatter(inPath, outPath)),
     };
 
     static ProfilerCaptureReportRunner()

@@ -473,22 +473,20 @@ public class RunnerController : MonoBehaviour
             }
         }
 
-        // El obstáculo desaparece al chocarlo (o al esquivarlo): es la señal
-        // visual más simple de "che, pasó algo" sin necesitar todavía una UI
-        // de vidas/daño (eso lo conectamos en la Fase 4, con el resto del
-        // sistema de menús reutilizable).
+        // El obstáculo NO se toca acá a propósito: se queda en su lugar y el
+        // jugador lo atraviesa. Antes desaparecía al chocarlo (era la señal
+        // visual más simple de "che, pasó algo" cuando todavía no había UI de
+        // vidas), pero ya existe el HUD de vidas (ver UIManager) y la reacción
+        // de Hit_Head para comunicar el choque, así que hacerlo desaparecer
+        // solo rompía la continuidad del escenario.
         //
-        // OPTIMIZACIÓN: lo devolvemos al pool de ObstacleSpawner (se
-        // desactiva y se reutiliza) en vez de Destroy() — ver comentario
-        // grande en ObstacleSpawner.cs. Si por algún motivo el spawner no
-        // existe (no debería pasar en el juego real), Destroy() como plan B.
-        if (ObstacleSpawner.Instance != null)
-        {
-            ObstacleSpawner.Instance.ReturnObstacle(other.gameObject);
-        }
-        else
-        {
-            Destroy(other.gameObject);
-        }
+        // Que se quede NO lo deja colgado ni pierde el pooling: ObstacleSpawner
+        // .CleanupBehindPlayer() lo devuelve al pool igual apenas queda
+        // despawnDistanceBehind unidades atrás, como a cualquier obstáculo que
+        // el jugador esquivó sin tocar.
+        //
+        // Tampoco puede volver a disparar este choque: OnTriggerEnter avisa
+        // una sola vez, al ENTRAR, y el jugador solo avanza (nunca retrocede
+        // para volver a entrar al mismo trigger).
     }
 }
