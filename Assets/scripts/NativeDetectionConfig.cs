@@ -30,13 +30,40 @@ public static class NativeDetectionConfig
                                                                // se reinicia el conteo
 
     // ------------------------------------------------------------------
+    // Rechazo de picos implausibles (ruido puntual de tracking)
+    // ------------------------------------------------------------------
+    // Ver IsImplausibleSpike en NativeMovementDetector.cs. Cualquier
+    // velocidad implícita (en ratios de torso por segundo) entre dos
+    // muestras CRUDAS consecutivas por encima de esto se trata como ruido
+    // de tracking, no como movimiento real del jugador, y ese frame se
+    // descarta antes de tocar el suavizado.
+    //
+    // Referencia para elegir el número: JumpMinUpwardVelocity (más abajo)
+    // es 0.55 y ya pasa por el EMA de velocidad (que amortigua picos). Para
+    // que este filtro nunca le coma un salto explosivo real -- incluso uno
+    // mucho más brusco que el mínimo detectado -- el piso queda bien por
+    // encima de cualquier velocidad humana plausible en esta escala, y
+    // solo atrapa saltos de tracking tipo "el landmark apareció en otro
+    // lado del cuadro" (que implican velocidades varias veces mayores).
+    public const float MaxPlausibleVelocityRatio = 6.0f;
+
+    // Si el rechazo de arriba se sostiene más que esto, se deja de
+    // desconfiar y se acepta el dato tal cual (ver comentario grande en
+    // IsImplausibleSpike sobre por qué hace falta este seguro).
+    public const float ImplausibleJumpMaxRejectSeconds = 0.25f;
+
+    // ------------------------------------------------------------------
     // Suavizado (reduce ruido/jitter del tracking frame a frame)
     // ------------------------------------------------------------------
     // EMA = Exponential Moving Average. Alpha más alto = reacciona más
     // rápido pero suaviza menos ruido. Alpha más bajo = más estable pero
     // más lag.
-    public const float PositionSmoothingAlpha = 0.45f;
-    public const float VelocitySmoothingAlpha = 0.55f;
+    // Subidos un poco (antes 0.45/0.55): con muestras llegando cada ~100ms
+    // (ver minSecondsBetweenDetections), suavizar de más se siente como
+    // demora extra antes de que el salto real "se note" en la señal — esto
+    // no cambia el ritmo de detección ni cuesta CPU, es la misma cuenta.
+    public const float PositionSmoothingAlpha = 0.6f;
+    public const float VelocitySmoothingAlpha = 0.7f;
     public const float TorsoLengthSmoothingAlpha = 0.1f;     // el largo del torso debería cambiar lento
                                                                // (solo si el jugador se acerca/aleja)
 
@@ -72,13 +99,24 @@ public static class NativeDetectionConfig
     public const float CrouchTriggerOffsetRatio = 0.15f;
 
     // A diferencia del salto, el agache no depende de la velocidad sino de
-    // que la posición se sostenga varios frames seguidos.
-    public const int CrouchMinHoldFrames = 5;
+    // que la posición se sostenga un rato.
+    //
+    // OJO: esto es DURACIÓN REAL (segundos), no cantidad de frames. Antes
+    // era "CrouchMinHoldFrames" (cantidad de muestras), pero acá "frame" no
+    // es un frame de Unity (~160fps) sino un resultado nuevo de MediaPipe —
+    // y esos llegan como mucho cada minSecondsBetweenDetections (~100ms,
+    // ver NativePoseInputSource), aposta, para no pedirle de más a la CPU.
+    // Contar "frames" de ese reloj mucho más lento hacía que salir de
+    // CROUCHING tardara centenares de ms de más (varias muestras a ~100ms
+    // cada una) antes de poder saltar de nuevo — de ahí el "se queda
+    // estancado" después de agacharse. Medir tiempo real en vez de cantidad
+    // de muestras es correcto sin importar a qué ritmo lleguen.
+    public const float CrouchMinHoldSeconds = 0.15f;
 
     // Histéresis de salida: para volver a STANDING, la cadera tiene que
     // subir por encima de este offset y sostenerlo.
     public const float CrouchReleaseOffsetRatio = 0.08f;
-    public const int StandMinHoldFrames = 4;
+    public const float StandMinHoldSeconds = 0.12f;
 
     // ------------------------------------------------------------------
     // Recuperación ante pérdida de tracking

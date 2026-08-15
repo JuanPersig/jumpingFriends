@@ -15,6 +15,13 @@ using Debug = UnityEngine.Debug;
 //
 // Nombres y estructura calcados del original a propósito, para poder
 // comparar ambos archivos lado a lado si algo no cuadra.
+//
+// 14/8, sesión de mejora de fidelidad: se le sumaron DOS cosas que el POC
+// de Python no tenía (ver comentarios en PoseGeometry.ComputeHipAndTorso y
+// en IsImplausibleSpike) -- ninguna de las dos toca los umbrales ya
+// tuneados de la máquina de estados (JumpTriggerOffsetRatio, etc.), así que
+// el "feel" del juego no debería notarse distinto en uso normal; lo que
+// cambia es qué tan fiel es la SEÑAL de entrada a esos umbrales.
 
 public enum MovementState
 {
@@ -61,8 +68,17 @@ internal static class PoseGeometry
             return null;
         }
 
-        float hipY = (leftHip.Y + rightHip.Y) / 2f;
-        float shoulderY = (leftShoulder.Y + rightShoulder.Y) / 2f;
+        // Promedio PONDERADO por visibilidad, no 50/50 a secas: si el
+        // jugador está de perfil, o un brazo le tapa la cadera un
+        // instante, MediaPipe suele seguir devolviendo un Y para ese
+        // landmark (no null) pero con visibility baja -- promediarlo
+        // igual que al lado bien trackeado arrastra la estimación hacia
+        // un dato de mala calidad. Pesar por visibility hace que el lado
+        // mejor visto domine, y cuando ambos lados están igual de bien
+        // vistos (el caso normal, cámara de frente) da EXACTAMENTE el
+        // mismo resultado que el promedio simple de antes.
+        float hipY = WeightedAverage(leftHip.Y, leftHip.Visibility, rightHip.Y, rightHip.Visibility);
+        float shoulderY = WeightedAverage(leftShoulder.Y, leftShoulder.Visibility, rightShoulder.Y, rightShoulder.Visibility);
         float torsoLength = Mathf.Abs(hipY - shoulderY);
 
         if (torsoLength < 1e-4f)
@@ -73,6 +89,19 @@ internal static class PoseGeometry
         }
 
         return new HipAndTorso(hipY, torsoLength, avgVisibility);
+    }
+
+    // Si los dos pesos son ~0 no debería llegar a llamarse (ya se filtró
+    // por avgVisibility antes), pero por las dudas cae al promedio simple
+    // en vez de dividir por cero.
+    private static float WeightedAverage(float valueA, float weightA, float valueB, float weightB)
+    {
+        float totalWeight = weightA + weightB;
+        if (totalWeight < 1e-4f)
+        {
+            return (valueA + valueB) / 2f;
+        }
+        return (valueA * weightA + valueB * weightB) / totalWeight;
     }
 }
 
@@ -185,11 +214,23 @@ public class NativeMovementDetector
     private float _smoothedVelocity;
     private float? _lastTimestamp;
 
+    // Último landmark CRUDO (sin suavizar) aceptado y su timestamp, usados
+    // solo por IsImplausibleSpike para detectar picos de ruido antes de que
+    // lleguen a tocar el suavizado. Separado de _smoothedY/_lastTimestamp a
+    // propósito: si se usara el valor ya suavizado como referencia, el
+    // EMA amortiguaría el propio pico y lo haría más difícil de detectar.
+    private float? _lastRawY;
+    private float? _lastRawTimestamp;
+
     private float _lastJumpTime = -999f;
     private float _jumpEnteredTime;
 
-    private int _crouchCandidateFrames;
-    private int _standCandidateFrames;
+    // Momento (timestampSeconds) en que arrancó la posición candidata a
+    // agache/parado actual; null = no hay candidato en curso ahora mismo.
+    // Ver comentario en NativeDetectionConfig.CrouchMinHoldSeconds sobre
+    // por qué esto se mide en tiempo real y no en cantidad de muestras.
+    private float? _crouchCandidateSince;
+    private float? _standCandidateSince;
 
     // Última vez que tuvimos una muestra válida (landmarks con confianza
     // suficiente). Se usa para el "seguro" de tracking perdido: ver
@@ -204,6 +245,8 @@ public class NativeMovementDetector
         _smoothedVelocity = 0f;
         _lastTimestamp = null;
         _lastValidSampleTime = null;
+        _lastRawY = null;
+        _lastRawTimestamp = null;
         State = MovementState.Standing;
         IsCalibrated = true;
     }
@@ -233,8 +276,74 @@ public class NativeMovementDetector
         TrackingOk = true;
         _lastValidSampleTime = timestampSeconds;
 
+        // Landmark visible (pasó el filtro de visibilidad de arriba) pero
+        // implausible: MediaPipe a veces "salta" un frame entero a una
+        // posición errónea (una mano cruzando delante de la cadera, un
+        // cambio de luz) y vuelve solo al frame siguiente. Ver comentario
+        // grande en IsImplausibleSpike.
+        if (IsImplausibleSpike(sample.Value.HipY, sample.Value.TorsoLength, timestampSeconds))
+        {
+            return;
+        }
+
         (float offsetRatio, float velocityRatio) = UpdateSignal(sample.Value.HipY, sample.Value.TorsoLength, timestampSeconds);
         RunStateMachine(offsetRatio, velocityRatio, timestampSeconds);
+    }
+
+    // ------------------------------------------------------------------
+    // Rechazo de picos implausibles (ruido puntual de tracking)
+    // ------------------------------------------------------------------
+    // Compara el landmark CRUDO de este frame contra el último crudo
+    // ACEPTADO (no contra _smoothedY -- el EMA ya amortigua el pico solo,
+    // lo que lo haría pasar desapercibido acá). Si el desplazamiento
+    // implica una velocidad (en ratios de torso por segundo) por encima de
+    // MaxPlausibleVelocityRatio, ningún salto/agache humano real la genera
+    // de un frame a otro (~100ms) -- es ruido de tracking, no movimiento.
+    // Se descarta ANTES de tocar el suavizado: ni _smoothedY ni
+    // _smoothedVelocity se actualizan con un frame así, así que un pico
+    // puntual no puede por sí solo cruzar JumpTriggerOffsetRatio ni
+    // ensuciar la velocidad usada por HandleStanding.
+    //
+    // Un frame rechazado NO actualiza _lastRawY/_lastRawTimestamp -- el
+    // próximo frame se sigue comparando contra el último dato BUENO
+    // conocido, así que el dt, cuando por fin se acepta uno, mide el
+    // intervalo real que estuvo "sospechoso" en vez de comparar ruido
+    // contra ruido. Seguro aparte (ImplausibleJumpMaxRejectSeconds): si el
+    // rechazo se sostiene más de ese tiempo, se deja de desconfiar y se
+    // acepta el dato tal cual -- si no, un cambio grande pero REAL (el
+    // jugador se recolocó frente a la cámara) quedaría descartado para
+    // siempre, comparado contra una referencia cada vez más vieja.
+    private bool IsImplausibleSpike(float hipY, float torsoLength, float timestampSeconds)
+    {
+        if (_lastRawY == null || _lastRawTimestamp == null)
+        {
+            _lastRawY = hipY;
+            _lastRawTimestamp = timestampSeconds;
+            return false;
+        }
+
+        float dt = timestampSeconds - _lastRawTimestamp.Value;
+        if (dt <= 1e-4f)
+        {
+            return false; // timestamp repetido/desordenado, nada que comparar
+        }
+
+        if (dt >= NativeDetectionConfig.ImplausibleJumpMaxRejectSeconds)
+        {
+            _lastRawY = hipY;
+            _lastRawTimestamp = timestampSeconds;
+            return false;
+        }
+
+        float impliedVelocityRatio = Mathf.Abs(_lastRawY.Value - hipY) / dt / torsoLength;
+        if (impliedVelocityRatio > NativeDetectionConfig.MaxPlausibleVelocityRatio)
+        {
+            return true;
+        }
+
+        _lastRawY = hipY;
+        _lastRawTimestamp = timestampSeconds;
+        return false;
     }
 
     // ------------------------------------------------------------------
@@ -284,14 +393,14 @@ public class NativeMovementDetector
                 HandleJumping(offsetRatio, now);
                 break;
             case MovementState.Crouching:
-                HandleCrouching(offsetRatio, now);
+                HandleCrouching(offsetRatio, velocityRatio, now);
                 break;
         }
     }
 
     private void HandleStanding(float offsetRatio, float velocityRatio, float now)
     {
-        _standCandidateFrames = 0;
+        _standCandidateSince = null;
 
         bool inCooldown = (now - _lastJumpTime) < NativeDetectionConfig.JumpCooldownSeconds;
         bool isJumpCandidate =
@@ -302,28 +411,27 @@ public class NativeMovementDetector
         {
             State = MovementState.Jumping;
             _jumpEnteredTime = now;
-            _crouchCandidateFrames = 0;
+            _crouchCandidateSince = null;
             OnJump?.Invoke();
             return;
         }
 
-        // Candidato a agache: requiere persistencia (varios frames
-        // seguidos) para no confundirse con un salto en preparación
-        // (contramovimiento hacia abajo antes de despegar) ni con ruido
-        // puntual.
+        // Candidato a agache: requiere persistencia (sostenerlo un rato)
+        // para no confundirse con un salto en preparación (contramovimiento
+        // hacia abajo antes de despegar) ni con ruido puntual.
         if (offsetRatio <= -NativeDetectionConfig.CrouchTriggerOffsetRatio)
         {
-            _crouchCandidateFrames++;
+            _crouchCandidateSince ??= now;
         }
         else
         {
-            _crouchCandidateFrames = 0;
+            _crouchCandidateSince = null;
         }
 
-        if (_crouchCandidateFrames >= NativeDetectionConfig.CrouchMinHoldFrames)
+        if (_crouchCandidateSince != null && now - _crouchCandidateSince.Value >= NativeDetectionConfig.CrouchMinHoldSeconds)
         {
             State = MovementState.Crouching;
-            _crouchCandidateFrames = 0;
+            _crouchCandidateSince = null;
             OnCrouch?.Invoke();
         }
     }
@@ -341,21 +449,49 @@ public class NativeMovementDetector
         }
     }
 
-    private void HandleCrouching(float offsetRatio, float now)
+    private void HandleCrouching(float offsetRatio, float velocityRatio, float now)
     {
+        // Salto directo desde agachado -- BUG real encontrado el 14/8
+        // (reportado como "algunos saltos no entran después de agacharse"):
+        // antes, la ÚNICA salida de Crouching era pasar primero por
+        // Standing (abajo), que pedía sostener el offset cerca de neutral
+        // StandMinHoldSeconds (0.12s) seguidos. Si el jugador se agacha y
+        // salta en un solo impulso continuo (sin pausar parado en el
+        // medio), la cadera cruza esa zona "casi neutral" tan rápido que
+        // nunca llega a sostenerla 0.12s -- y mientras tanto, el salto de
+        // verdad (que ya venía con velocidad de sobra) no se evaluaba para
+        // nada, porque el estado seguía siendo Crouching. Para cuando por
+        // fin se declaraba Standing, la velocidad real ya venía bajando y
+        // el salto se perdía. Mismos umbrales que un salto desde Standing
+        // (JumpTriggerOffsetRatio/JumpMinUpwardVelocity/JumpCooldownSeconds)
+        // -- no hace falta relajar nada para que esto dispare correcto.
+        bool inCooldown = (now - _lastJumpTime) < NativeDetectionConfig.JumpCooldownSeconds;
+        bool isJumpCandidate =
+            offsetRatio >= NativeDetectionConfig.JumpTriggerOffsetRatio
+            && velocityRatio >= NativeDetectionConfig.JumpMinUpwardVelocity;
+
+        if (!inCooldown && isJumpCandidate)
+        {
+            State = MovementState.Jumping;
+            _jumpEnteredTime = now;
+            _standCandidateSince = null;
+            OnJump?.Invoke();
+            return;
+        }
+
         if (offsetRatio >= -NativeDetectionConfig.CrouchReleaseOffsetRatio)
         {
-            _standCandidateFrames++;
+            _standCandidateSince ??= now;
         }
         else
         {
-            _standCandidateFrames = 0;
+            _standCandidateSince = null;
         }
 
-        if (_standCandidateFrames >= NativeDetectionConfig.StandMinHoldFrames)
+        if (_standCandidateSince != null && now - _standCandidateSince.Value >= NativeDetectionConfig.StandMinHoldSeconds)
         {
             State = MovementState.Standing;
-            _standCandidateFrames = 0;
+            _standCandidateSince = null;
             OnStand?.Invoke();
         }
     }
@@ -376,8 +512,8 @@ public class NativeMovementDetector
             Debug.LogWarning($"[NativeMovementDetector] Tracking perdido {lostDuration:0.0}s estando en {State} -> forzando Standing.");
             State = MovementState.Standing;
             _lastJumpTime = now;
-            _crouchCandidateFrames = 0;
-            _standCandidateFrames = 0;
+            _crouchCandidateSince = null;
+            _standCandidateSince = null;
             OnStand?.Invoke();
         }
     }

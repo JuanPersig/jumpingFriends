@@ -48,6 +48,11 @@ public class RunnerController : MonoBehaviour
     // Crouch_Fwd_Loop, no un achique del modelo.
     [SerializeField] private float crouchHeightScale = 0.5f;
     [SerializeField] private float crouchTransitionDuration = 0.15f;
+    [Tooltip("Tiempo mínimo agachado antes de que un salto pueda cancelar la animación " +
+             "de agache. Sin esto, un salto que llega a mitad de la transición corta la " +
+             "pose a la mitad y se ve raro. El salto NO se pierde si llega antes: queda " +
+             "programado para disparar apenas se cumpla este tiempo.")]
+    [SerializeField] private float minCrouchSettleSeconds = 0.15f;
 
     [Header("Animación")]
     [Tooltip("Opcional: si no se asigna, el personaje se mueve igual, solo que sin animar.")]
@@ -56,6 +61,16 @@ public class RunnerController : MonoBehaviour
     [SerializeField] private string jumpClipName = "Jump_Loop";
     [SerializeField] private string crouchClipName = "Crouch_Fwd_Loop";
     [SerializeField] private float animationCrossFade = 0.1f;
+
+    [Header("Reacción al chocar la Barrera")]
+    [Tooltip("Nombre EXACTO del estado en 'Player Animator.controller' para la reacción de choque " +
+             "de cabeza (clip del pack: 'Hit_Head', dentro de UAL1_Standard.fbx). Solo se dispara con " +
+             "la Barrera (obstáculo alto, se choca de cabeza) -- el Log se choca con el cuerpo, no " +
+             "aplica. Vacío = no reproduce nada (mismo comportamiento que antes de este cambio).")]
+    [SerializeField] private string hitHeadClipName = "Hit_Head";
+    [Tooltip("Cuánto se sostiene la pose de choque antes de volver a la animación de correr. No sale " +
+             "de ningún otro timer del juego -- ajustalo mirando el clip en Play hasta que se vea bien.")]
+    [SerializeField] private float hitHeadHoldSeconds = 0.5f;
 
     public PlayerState State { get; private set; } = PlayerState.Running;
 
@@ -68,6 +83,18 @@ public class RunnerController : MonoBehaviour
     // Ver HandleCrouch/HandleStand/JumpRoutine: un agache que llega
     // mientras estamos en el aire se guarda acá en vez de perderse.
     private bool queuedCrouchOnLanding = false;
+    // Momento en que se entró a Crouching (para minCrouchSettleSeconds) y la
+    // corrutina del salto programado cuando llega mientras el agache todavía
+    // no se asentó (ver HandleJump). Separada de actionRoutine a propósito:
+    // si mientras tanto llega un OnStand, no queremos que cancelar la
+    // corrutina de "pararse" se lleve puesto el salto ya decidido.
+    private float crouchEnteredTime = -999f;
+    private Coroutine pendingJumpRoutine;
+    // Corrutina de la reacción de choque de cabeza (ver PlayHitHeadReaction).
+    // Separada de actionRoutine a propósito: es puramente cosmética (no
+    // toca State ni el collider), así que no debería competir por la misma
+    // corrutina que sí gobierna el salto/agache real.
+    private Coroutine hitHeadRoutine;
 
     // Hashes de los nombres de clip, calculados UNA sola vez en Awake en
     // vez de dejar que Animator.CrossFadeInFixedTime(string, ...) rehaga
@@ -96,6 +123,27 @@ public class RunnerController : MonoBehaviour
         Rigidbody rb = GetComponent<Rigidbody>();
         rb.isKinematic = true;
         rb.useGravity = false;
+
+        // TUNNELING -- causa real de "choques que no entran" (diagnosticado
+        // 14/8 con el reporte de que la animación de Hit_Head aparecía
+        // segundos tarde: no llegaba tarde, se PERDÍA el choque de esa
+        // barrera y disparaba recién con una posterior).
+        //
+        // Los números: el trigger de la Barrera mide 0.306 unidades de
+        // profundidad en Z (BoxCollider size z=1, pero el root del prefab
+        // tiene scale z=0.30581). La física corre a 50Hz (timestep 0.02s) y
+        // el jugador llega a 16 u/s -> 0.32 unidades por paso de física,
+        // MÁS que el grosor del trigger. Con detección discreta (el default)
+        // la física solo testea posiciones sueltas: el jugador pasa de
+        // "antes" a "después" del trigger sin que ningún paso lo encuentre
+        // adentro, y OnTriggerEnter nunca se dispara. Se perdía el choque
+        // entero, no solo la animación -- también la vida que correspondía.
+        //
+        // ContinuousSpeculative es el modo continuo que SÍ soportan los
+        // rigidbodies kinemáticos (Continuous/ContinuousDynamic son solo
+        // para los dinámicos): en vez de testear posiciones sueltas, barre
+        // el collider a lo largo de su recorrido entre paso y paso.
+        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
     }
 
     // Llamado por PlayerCharacterSpawner cuando reemplaza el modelo
@@ -160,10 +208,38 @@ public class RunnerController : MonoBehaviour
 
         if (State == PlayerState.Crouching)
         {
+            float remaining = minCrouchSettleSeconds - (Time.time - crouchEnteredTime);
+            if (remaining > 0f)
+            {
+                // Todavía no pasó el mínimo para que la pose de agache se
+                // vea asentada -- el salto NO se pierde, se programa para
+                // el instante justo en que se cumpla (ver comentario en
+                // minCrouchSettleSeconds).
+                if (pendingJumpRoutine != null) StopCoroutine(pendingJumpRoutine);
+                pendingJumpRoutine = StartCoroutine(BeginJumpAfterDelay(remaining));
+                return;
+            }
+        }
+
+        BeginJump();
+    }
+
+    private IEnumerator BeginJumpAfterDelay(float delaySeconds)
+    {
+        yield return new WaitForSeconds(delaySeconds);
+        pendingJumpRoutine = null;
+        if (State == PlayerState.Jumping) yield break; // ya se disparó por otro camino mientras tanto
+        BeginJump();
+    }
+
+    private void BeginJump()
+    {
+        if (State == PlayerState.Crouching)
+        {
             // Saltando directo desde agachado: restauramos el hitbox al
-            // instante (sin transición) para no perder tiempo, y arrancamos
-            // el salto ya mismo. Ya no hay Transform que restaurar (el
-            // agache no toca el Transform, solo el CapsuleCollider).
+            // instante (sin transición) para no perder tiempo. Ya no hay
+            // Transform que restaurar (el agache no toca el Transform,
+            // solo el CapsuleCollider).
             capsule.height = originalColliderHeight;
             Vector3 center = capsule.center;
             center.y = originalColliderCenterY;
@@ -192,6 +268,7 @@ public class RunnerController : MonoBehaviour
 
         if (State != PlayerState.Running) return;
         State = PlayerState.Crouching;
+        crouchEnteredTime = Time.time;
         PlayAnimation(crouchClipHash);
         RestartRoutine(ResizeCrouchCollider(originalColliderHeight * crouchHeightScale));
     }
@@ -292,6 +369,36 @@ public class RunnerController : MonoBehaviour
         PlayAnimation(runClipHash);
     }
 
+    // Reacción cosmética al chocar la Barrera de cabeza (ver OnTriggerEnter).
+    // A propósito NO toca State/actionRoutine/el collider -- el choque ya se
+    // procesó (vida restada, obstáculo devuelto al pool) en OnTriggerEnter;
+    // esto es solo la animación. Si el jugador salta o se agacha de verdad
+    // mientras dura, HandleJump/HandleCrouch pisan esto solos (mismo
+    // CrossFade que cualquier otra transición), no hace falta cancelarlo acá.
+    private void PlayHitHeadReaction()
+    {
+        if (string.IsNullOrEmpty(hitHeadClipName)) return;
+
+        PlayCustomAnimation(hitHeadClipName);
+
+        if (hitHeadRoutine != null) StopCoroutine(hitHeadRoutine);
+        hitHeadRoutine = StartCoroutine(ResumeAfterHitHead());
+    }
+
+    private IEnumerator ResumeAfterHitHead()
+    {
+        yield return new WaitForSeconds(hitHeadHoldSeconds);
+        hitHeadRoutine = null;
+
+        // Solo si seguimos corriendo normal -- si mientras tanto saltaste o
+        // te agachaste de verdad, esa animación ya está puesta y no hay que
+        // pisarla con la de correr.
+        if (State == PlayerState.Running)
+        {
+            PlayAnimation(runClipHash);
+        }
+    }
+
     // Achica/agranda SOLO el CapsuleCollider (height/center), nunca el
     // Transform ni la malla visual.
     //
@@ -355,6 +462,15 @@ public class RunnerController : MonoBehaviour
         if (!dodgedByJumpGrace)
         {
             GameManager.Instance?.RegisterObstacleHit();
+
+            // Reacción de cabeza SOLO con la Barrera: es el único obstáculo
+            // que se choca de cabeza (alto, se agacha para pasar) -- el Log
+            // se choca con el cuerpo/piernas (bajo, se salta), no tiene
+            // sentido la misma reacción ahí.
+            if (!isLowObstacle)
+            {
+                PlayHitHeadReaction();
+            }
         }
 
         // El obstáculo desaparece al chocarlo (o al esquivarlo): es la señal

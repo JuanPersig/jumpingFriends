@@ -889,12 +889,15 @@ MonoBehaviour:
   lowObstacleJumpGraceSecondsLate: 0.6
   lowObstacleHeightThreshold: 1
   crouchHeightScale: 0.5
-  crouchTransitionDuration: 0.1
+  crouchTransitionDuration: 0.05
+  minCrouchSettleSeconds: 0.15
   animator: {fileID: 144242000}
   runClipName: Sprint_Loop
   jumpClipName: Jump_Loop
   crouchClipName: Crouch_Fwd_Loop
   animationCrossFade: 0.08
+  hitHeadClipName: Hit_Head
+  hitHeadHoldSeconds: 0.2
 --- !u!54 &640943989
 Rigidbody:
   m_ObjectHideFlags: 0
