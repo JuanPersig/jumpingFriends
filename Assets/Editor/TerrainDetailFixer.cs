@@ -46,6 +46,20 @@ public static class TerrainDetailFixer
                 sb.AppendLine($"Terrain.treeDistance = {terrain.treeDistance}");
                 sb.AppendLine($"Terrain.detailObjectDistance = {terrain.detailObjectDistance}");
                 sb.AppendLine($"Terrain.detailObjectDensity = {terrain.detailObjectDensity}");
+                // Agregado 15/8 para diagnosticar "chunks se generan uno
+                // arriba del otro" -- si TerrainData.size.z no coincide con
+                // ChunkSpawner.chunkLength (20 en la escena), el terreno de
+                // cada chunk físicamente se superpone con el siguiente aunque
+                // el espaciado del spawner esté bien calculado.
+                if (terrain.terrainData != null)
+                {
+                    sb.AppendLine($"Terrain.transform.position = {terrain.transform.position}");
+                    sb.AppendLine($"TerrainData.size = {terrain.terrainData.size}");
+                }
+                else
+                {
+                    sb.AppendLine("TerrainData es null.");
+                }
             }
         }
         finally
@@ -55,6 +69,32 @@ public static class TerrainDetailFixer
 
         File.WriteAllText(Path.GetFullPath(outPath), sb.ToString());
         Debug.Log($"[TerrainDetailFixer] Verificación escrita en: {outPath}");
+    }
+
+    // Diagnóstico de runtime (15/8): lista todos los "Chunk_A(Clone)" vivos
+    // en la escena AHORA MISMO, con su posición Z real -- para confirmar si
+    // de verdad se están superponiendo o si el spawner está bien y solo
+    // parecían muchos en la Hierarchy. Solo encuentra algo si el juego está
+    // en Play Mode en el instante en que se dispara el trigger; si la lista
+    // sale vacía, lo más probable es que no estaba en Play en ese momento.
+    public static void InspectLiveChunks(string unusedInput, string outPath)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"EditorApplication.isPlaying = {EditorApplication.isPlaying}");
+
+        var chunks = Object.FindObjectsByType<Transform>(FindObjectsSortMode.None)
+            .Where(t => t.gameObject.name.StartsWith("Chunk_A"))
+            .OrderBy(t => t.position.z)
+            .ToList();
+
+        sb.AppendLine($"Chunks encontrados: {chunks.Count}");
+        foreach (var t in chunks)
+        {
+            sb.AppendLine($"  {t.gameObject.name}: position = {t.position}");
+        }
+
+        File.WriteAllText(Path.GetFullPath(outPath), sb.ToString());
+        Debug.Log($"[TerrainDetailFixer] Inspección de chunks vivos escrita en: {outPath}");
     }
 
     // Investiga por qué Terrain.drawInstanced=true deja el suelo invisible

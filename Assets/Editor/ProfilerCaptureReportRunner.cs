@@ -30,6 +30,7 @@ public static class ProfilerCaptureReportRunner
         ("run_fix_material.trigger", (inPath, outPath) => TerrainDetailFixer.FixInstancedTerrainMaterial(inPath, outPath)),
         ("run_inspect_detail.trigger", (inPath, outPath) => TerrainDetailFixer.InspectDetailScatter(inPath, outPath)),
         ("run_revert_detail_scatter.trigger", (inPath, outPath) => TerrainDetailFixer.RevertDetailScatterToInstanceCount(inPath, outPath)),
+        ("run_inspect_chunks.trigger", (inPath, outPath) => TerrainDetailFixer.InspectLiveChunks(inPath, outPath)),
     };
 
     static ProfilerCaptureReportRunner()

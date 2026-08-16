@@ -34,6 +34,18 @@ public class ChunkSpawner : MonoBehaviour
     [SerializeField] private float despawnDistanceBehind = 20f;
 
     private float nextChunkZ;
+    // BUG real encontrado el 15/8 ("chunks generados uno arriba del otro"):
+    // sin este guard, Update() corre TODOS los frames -- incluidos los que
+    // pasan mientras SpawnInitialChunks() todavía está a mitad de camino
+    // (yieldeando entre cada chunk, a propósito, para repartir el costo).
+    // nextChunkZ arranca en 0 por default de C# ANTES de que la corrutina
+    // llegue a poner "nextChunkZ = 0f" a mano -- así que Update() alcanzaba
+    // a spawnear 0/20/40 por su cuenta usando ese 0 "prestado", y un frame
+    // después la corrutina reseteaba nextChunkZ = 0f para arrancar SU
+    // propio for, pisando el mismo rango de nuevo -- de ahí los chunks
+    // duplicados exactos en la misma posición. Con este guard, Update() no
+    // toca nada hasta que la corrutina inicial terminó del todo.
+    private bool initialChunksReady;
     private readonly List<GameObject> activeChunks = new List<GameObject>();
     // El Terrain del último chunk spawneado, para poder conectarlo como
     // "vecino" del próximo (ver SpawnNextChunk). Si tus chunks usan un
@@ -74,10 +86,16 @@ public class ChunkSpawner : MonoBehaviour
             SpawnNextChunk();
             yield return null;
         }
+
+        // Recién ACÁ termina de estabilizarse nextChunkZ -- antes de esto,
+        // Update() se queda quieto (ver el guard de abajo).
+        initialChunksReady = true;
     }
 
     private void Update()
     {
+        if (!initialChunksReady) return;
+
         // Mantenemos siempre "chunksAhead" trozos de margen por delante,
         // sin importar qué tan rápido esté corriendo el jugador (la
         // dificultad/velocidad la maneja DifficultyManager, esto solo
