@@ -72,6 +72,20 @@ public class RunnerController : MonoBehaviour
              "de ningún otro timer del juego -- ajustalo mirando el clip en Play hasta que se vea bien.")]
     [SerializeField] private float hitHeadHoldSeconds = 0.5f;
 
+    [Header("Muerte")]
+    [Tooltip("Cuánto dura, en segundos, el recorrido de la curva de abajo -- lo ideal es que " +
+             "coincida con la duración real del clip Death01 (la ves seleccionando el clip " +
+             "adentro del FBX en el Project, abajo del preview). Si termina antes de que el " +
+             "clip termine de caer, el offset se queda clavado en el último valor de la curva.")]
+    [SerializeField] private float deathAnimationDuration = 1.5f;
+    [Tooltip("Offset en Y (sumado al piso normal, groundLocalY) A LO LARGO de la animación de " +
+             "muerte -- NO es un número fijo: Death01 no es una pose \"en el lugar\" como " +
+             "correr/saltar, el personaje se va hundiendo a medida que cae, así que el offset " +
+             "correcto va cambiando con el tiempo (cerca de 0 al principio, más negativo al " +
+             "final, ya tirado). Ajustá la forma de la curva en el Inspector mirando el " +
+             "resultado en Play -- eje X = progreso 0 a 1 de la animación, eje Y = el offset.")]
+    [SerializeField] private AnimationCurve deathPoseYOffsetOverTime = AnimationCurve.Linear(0f, 0f, 1f, -0.65f);
+
     public PlayerState State { get; private set; } = PlayerState.Running;
 
     private CapsuleCollider capsule;
@@ -199,6 +213,13 @@ public class RunnerController : MonoBehaviour
 
     private void HandleJump()
     {
+        // Una vez terminado el juego, ignoramos cualquier salto/agache/
+        // parado que siga llegando de la detección real -- sin esto, el
+        // "cadáver" de GameOutroSequence podía seguir reaccionando a que
+        // te muevas de verdad frente a la cámara mientras se reproduce
+        // Death01, arruinando la pose.
+        if (GameManager.Instance != null && GameManager.Instance.IsGameOver) return;
+
         // Solo ignoramos el salto si YA está en el aire (para no reiniciar
         // el arco a mitad de camino). Antes también lo ignorábamos estando
         // agachado, obligando a pasar por un instante "de pie" en el medio
@@ -254,6 +275,8 @@ public class RunnerController : MonoBehaviour
 
     private void HandleCrouch()
     {
+        if (GameManager.Instance != null && GameManager.Instance.IsGameOver) return;
+
         if (State == PlayerState.Jumping)
         {
             // A velocidad alta puede llegar un agache mientras TODAVÍA
@@ -275,6 +298,8 @@ public class RunnerController : MonoBehaviour
 
     private void HandleStand()
     {
+        if (GameManager.Instance != null && GameManager.Instance.IsGameOver) return;
+
         // Si en la vida real el jugador ya se paró de nuevo antes de que
         // termine el salto, cancelamos el agache que habíamos guardado —
         // si no, aterrizaría agachándose por un comando que ya quedó viejo.
@@ -348,6 +373,63 @@ public class RunnerController : MonoBehaviour
     {
         if (animator == null || clipHash == 0) return;
         animator.CrossFadeInFixedTime(clipHash, animationCrossFade);
+    }
+
+    // Público para GameOutroSequence: arranca la animación de muerte Y
+    // maneja todo lo que hace falta para que se vea bien.
+    //
+    // Si el choque final pasó justo en medio de un salto o un agache, la
+    // corrutina que lo manejaba (JumpRoutine/StandRoutine/
+    // ResizeCrouchCollider) sigue corriendo sola -- no está atada a
+    // GameManager.IsGameOver, es aparte del Update() que sí lo chequea --
+    // y seguía peleando por la Y del personaje (o el tamaño del collider)
+    // al mismo tiempo que Death01 ya estaba crossfadeado encima. Frenamos
+    // esa corrutina y volvemos el collider a su tamaño normal ANTES de
+    // arrancar.
+    //
+    // La Y del personaje durante la animación la maneja DeathYOffsetRoutine
+    // (más abajo) -- ver el comentario grande en deathPoseYOffsetOverTime
+    // sobre por qué hace falta una curva en vez de un offset fijo.
+    public void PlayDeathAnimation(string clipName)
+    {
+        if (actionRoutine != null) { StopCoroutine(actionRoutine); actionRoutine = null; }
+        if (pendingJumpRoutine != null) { StopCoroutine(pendingJumpRoutine); pendingJumpRoutine = null; }
+        if (hitHeadRoutine != null) { StopCoroutine(hitHeadRoutine); hitHeadRoutine = null; }
+
+        capsule.height = originalColliderHeight;
+        Vector3 center = capsule.center;
+        center.y = originalColliderCenterY;
+        capsule.center = center;
+
+        if (!string.IsNullOrEmpty(clipName))
+        {
+            PlayCustomAnimation(clipName);
+        }
+
+        RestartRoutine(DeathYOffsetRoutine());
+    }
+
+    // Sigue la curva deathPoseYOffsetOverTime a lo largo de
+    // deathAnimationDuration segundos, ajustando la Y del personaje frame
+    // a frame -- root motion sigue apagado a propósito (ver
+    // PlayerCharacterSpawner), así que sin esto Unity no mueve la Y sola
+    // durante el clip. Al llegar al final se queda clavado en el último
+    // valor de la curva (Evaluate con t=1 fuera de rango simplemente
+    // repite el último keyframe, no hay que hacer nada especial).
+    private IEnumerator DeathYOffsetRoutine()
+    {
+        float elapsed = 0f;
+        while (elapsed < deathAnimationDuration)
+        {
+            elapsed += Time.deltaTime;
+            float t = Mathf.Clamp01(elapsed / deathAnimationDuration);
+
+            Vector3 pos = transform.position;
+            pos.y = groundLocalY + deathPoseYOffsetOverTime.Evaluate(t);
+            transform.position = pos;
+
+            yield return null;
+        }
     }
 
     // Público para GameIntroSequence: muestra un clip por NOMBRE (no hash

@@ -69,9 +69,14 @@ public class GameOutroSequence : MonoBehaviour
         // que GameIntroSequence al arrancar la partida.
         if (cameraFollow != null) cameraFollow.enabled = false;
 
-        if (player != null && !string.IsNullOrEmpty(deathClipName))
+        // PlayDeathAnimation se encarga de todo: frena cualquier corrutina
+        // de salto/agache que siguiera corriendo sola, y anima la Y del
+        // personaje a lo largo del clip (ver deathPoseYOffsetOverTime en
+        // RunnerController -- un offset fijo no alcanzaba, Death01 se va
+        // hundiendo a medida que cae, no es una pose "en el lugar").
+        if (player != null)
         {
-            player.PlayCustomAnimation(deathClipName);
+            player.PlayDeathAnimation(deathClipName);
         }
 
         Transform cam = cameraFollow != null ? cameraFollow.transform : null;
@@ -82,12 +87,13 @@ public class GameOutroSequence : MonoBehaviour
             Quaternion startRot = cam.rotation;
             float elapsed = 0f;
 
-            // OJO: leemos deathCameraAnchor.position/.rotation DE NUEVO en
-            // cada vuelta del while, no una sola vez al principio -- es
-            // hijo del jugador, así que si el jugador todavía se está
-            // asentando (ej. terminando el arco de un salto que ya venía en
-            // curso justo cuando perdió), el ancla se mueve con él y el
-            // Lerp apunta siempre al lugar correcto, no a una foto vieja.
+            // Leemos deathCameraAnchor.position/.rotation DE NUEVO en cada
+            // vuelta del while, no una sola vez al principio -- es hijo del
+            // jugador, y PlayDeathAnimation() sigue moviendo su Y en tiempo
+            // real mientras el personaje cae (ver DeathYOffsetRoutine en
+            // RunnerController), así que el ancla se hunde CON él y el Lerp
+            // apunta siempre al lugar correcto, no a una foto vieja de
+            // antes de que empezara a caer.
             while (elapsed < cameraTransitionDuration)
             {
                 elapsed += Time.deltaTime;

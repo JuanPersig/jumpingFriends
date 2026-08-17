@@ -21,6 +21,9 @@ public class MenuController : MonoBehaviour
     [SerializeField] private GameObject mainPanel;
     [Tooltip("Panel de selección: flechas, nombre del personaje, botón Volver.")]
     [SerializeField] private GameObject characterSelectPanel;
+    [Tooltip("Panel de Configuración: cámara en vivo, estado detectado, sliders de " +
+             "sensibilidad y botón Recalibrar (ver DetectionSettingsPanel).")]
+    [SerializeField] private GameObject settingsPanel;
     [Tooltip("Opcional: si lo asignás, la cámara se mueve suavemente al Cylinder (donde " +
              "salta Jumper) al entrar a Elegir Personaje, y vuelve a la vista principal al Volver.")]
     [SerializeField] private MenuCameraMover cameraMover;
@@ -51,7 +54,15 @@ public class MenuController : MonoBehaviour
         if (cameraMover != null) cameraMover.ShowCharacterSelectView();
     }
 
-    // Enganchá esto al botón "Volver" del panel de selección.
+    // Enganchá esto al botón "Configuración" del panel principal.
+    public void OnOpenSettings()
+    {
+        if (mainPanel != null) mainPanel.SetActive(false);
+        if (settingsPanel != null) settingsPanel.SetActive(true);
+    }
+
+    // Enganchá esto al botón "Volver" del panel de selección Y al del
+    // panel de Configuración -- los dos vuelven al mismo lugar.
     public void OnBackToMainMenu()
     {
         ShowMainPanel();
@@ -60,6 +71,7 @@ public class MenuController : MonoBehaviour
     private void ShowMainPanel()
     {
         if (characterSelectPanel != null) characterSelectPanel.SetActive(false);
+        if (settingsPanel != null) settingsPanel.SetActive(false);
         if (mainPanel != null) mainPanel.SetActive(true);
         if (cameraMover != null) cameraMover.ShowMainMenuView();
     }

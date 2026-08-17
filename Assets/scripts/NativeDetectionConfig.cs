@@ -10,8 +10,46 @@
 // todo acá se expresa como "ratio del torso" (distancia hombro-cadera), no
 // en píxeles ni unidades absolutas — así los umbrales no dependen de qué
 // tan lejos esté el jugador de la cámara.
+using UnityEngine;
+
 public static class NativeDetectionConfig
 {
+    // ------------------------------------------------------------------
+    // Sensibilidad ajustable por el jugador (pantalla de Configuración del
+    // Menú Principal, ver DetectionSettingsPanel) -- a diferencia de TODO
+    // lo demás en este archivo (const, fijo), estos dos son
+    // "public static" mutables porque los sliders de la UI los tocan en
+    // vivo, y se guardan en PlayerPrefs para que la sensibilidad elegida
+    // sobreviva entre partidas. LoadPlayerPrefs() los pisa con el valor
+    // guardado (si existe) apenas arranca el juego -- si nunca se tocó
+    // ningún slider, se quedan en el valor tuneado de fábrica de abajo.
+    public static float JumpTriggerOffsetRatio = 0.20f;
+    public static float CrouchTriggerOffsetRatio = 0.15f;
+
+    private const string JumpSensitivityPrefKey = "Detection_JumpTriggerOffsetRatio";
+    private const string CrouchSensitivityPrefKey = "Detection_CrouchTriggerOffsetRatio";
+
+    // [RuntimeInitializeOnLoadMethod] corre UNA vez por sesión de juego,
+    // antes de que cargue la primera escena -- así, sin importar si el
+    // jugador entra directo a Gameplay.unity para probar algo o pasa por
+    // MainMenu primero, la sensibilidad guardada ya está aplicada antes de
+    // que NativeMovementDetector la lea por primera vez.
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+    private static void LoadPlayerPrefs()
+    {
+        JumpTriggerOffsetRatio = PlayerPrefs.GetFloat(JumpSensitivityPrefKey, JumpTriggerOffsetRatio);
+        CrouchTriggerOffsetRatio = PlayerPrefs.GetFloat(CrouchSensitivityPrefKey, CrouchTriggerOffsetRatio);
+    }
+
+    // Público para DetectionSettingsPanel: se llama cada vez que el
+    // jugador mueve alguno de los sliders de sensibilidad.
+    public static void SaveSensitivityPrefs()
+    {
+        PlayerPrefs.SetFloat(JumpSensitivityPrefKey, JumpTriggerOffsetRatio);
+        PlayerPrefs.SetFloat(CrouchSensitivityPrefKey, CrouchTriggerOffsetRatio);
+        PlayerPrefs.Save();
+    }
+
     // ------------------------------------------------------------------
     // Confianza de landmarks
     // ------------------------------------------------------------------
@@ -70,9 +108,9 @@ public static class NativeDetectionConfig
     // ------------------------------------------------------------------
     // Detección de salto (JUMPING)
     // ------------------------------------------------------------------
-    // La cadera debe subir al menos este % del largo del torso respecto a
-    // la posición neutral para considerarse un candidato a salto.
-    public const float JumpTriggerOffsetRatio = 0.20f;
+    // JumpTriggerOffsetRatio (cuánto % del torso tiene que subir la cadera
+    // para contar como candidato a salto) se movió arriba de todo -- ya no
+    // es const, es ajustable por el jugador (ver Sensibilidad).
 
     // Además del desplazamiento, exige una velocidad ascendente mínima (en
     // ratios de torso por segundo), para que una elevación lenta y
@@ -94,9 +132,9 @@ public static class NativeDetectionConfig
     // ------------------------------------------------------------------
     // Detección de agache (CROUCHING)
     // ------------------------------------------------------------------
-    // La cadera debe bajar al menos este % del largo del torso respecto a
-    // la posición neutral para considerarse un candidato a agache.
-    public const float CrouchTriggerOffsetRatio = 0.15f;
+    // CrouchTriggerOffsetRatio (cuánto % del torso tiene que bajar la
+    // cadera para contar como candidato a agache) se movió arriba de todo
+    // -- ya no es const, es ajustable por el jugador (ver Sensibilidad).
 
     // A diferencia del salto, el agache no depende de la velocidad sino de
     // que la posición se sostenga un rato.

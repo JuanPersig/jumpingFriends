@@ -27,11 +27,39 @@ using Stopwatch = System.Diagnostics.Stopwatch;
 // guarda ahí bajo lock y se procesa en Update(), mismo patrón que ya usa
 // PlayerInputProvider.cs para los mensajes UDP que llegan en su propio hilo.
 //
-// Pensado para vivir en el mismo GameObject que PlayerInputProvider
-// (persistente, DontDestroyOnLoad), así calibra una sola vez por sesión de
-// juego, al arrancar.
+// Singleton persistente (DontDestroyOnLoad) -- IMPORTANTE, cambio del
+// 17/8: antes esto NO era un singleton de verdad, y al agregar la pantalla
+// de Configuración del Menú (que arranca SU PROPIA cámara/detección para
+// mostrar el preview) terminamos con DOS instancias vivas al mismo tiempo
+// -- una del Menú, otra de Gameplay.unity -- peleando por la MISMA webcam
+// al pasar de una escena a otra. Resultado real, confirmado jugando:
+// "ya no responde al salto ni al agacharse" en Gameplay, y una
+// recalibración redundante justo al entrar a jugar.
+//
+// La PRIMERA instancia que se crea (normalmente la del Menú Principal, si
+// el jugador pasó por ahí) se vuelve persistente y sobrevive el cambio de
+// escena -- Gameplay.unity YA NO necesita crear/calibrar una nueva, la
+// reusa tal cual llegó (ya calibrada). Si en cambio abrís Gameplay.unity
+// DIRECTO desde el Editor (sin pasar por el Menú), no hay ninguna
+// instancia previa -- la de Gameplay.unity pasa a ser la única y funciona
+// exactamente igual que siempre.
+//
+// OJO -- a propósito NO hereda de Singleton<T> (a diferencia de
+// PlayerInputProvider/GameManager/etc.): ese patrón destruye TODO el
+// GameObject del duplicado (Destroy(gameObject)), y en Gameplay.unity el
+// GameObject "InputManager" tiene a PlayerInputProvider VIVIENDO EN EL
+// MISMO OBJETO. Con Singleton<T>, el duplicado de acá se detectaba a sí
+// mismo y se destruía entero -- llevándose puesto a PlayerInputProvider
+// en el mismo golpe, dejando a RunnerController sin nadie a quien
+// suscribirse (bug real, encontrado el 17/8: "no responde al salto ni al
+// agacharse" apenas se pasaba por el Menú). Acá abajo se implementa el
+// mismo patrón a mano, pero destruyendo SOLO este componente
+// (Destroy(this)), no el GameObject entero -- así los hermanos de
+// GameObject (PlayerInputProvider incluido) quedan intactos.
 public class NativePoseInputSource : MonoBehaviour
 {
+    public static NativePoseInputSource Instance { get; private set; }
+
     [Header("Modelo (debe estar copiado en Assets/StreamingAssets/)")]
     [SerializeField] private string modelFileName = "pose_landmarker_lite.bytes";
 
@@ -48,6 +76,18 @@ public class NativePoseInputSource : MonoBehaviour
     // la forma más directa de controlar cuánta CPU le pedimos a MediaPipe,
     // sin depender del driver de la cámara.
     [SerializeField] private float minSecondsBetweenDetections = 0.1f;
+
+    [Header("Calibración")]
+    [Tooltip("Cuántos segundos esperar DESPUÉS de que la webcam/MediaPipe ya están listos y " +
+             "ANTES de arrancar a calibrar -- le da tiempo al jugador de acomodarse frente a " +
+             "la cámara (por ejemplo, en la pantalla de Configuración, donde recién está " +
+             "entrando y todavía no se paró en posición) en vez de empezar a calibrar de " +
+             "inmediato con él fuera de cuadro o a medio moverse. 0 = calibra apenas está " +
+             "todo listo, como antes (el comportamiento de Gameplay.unity no cambia si se deja " +
+             "en 0 ahí).")]
+    [SerializeField] private float calibrationStartDelaySeconds = 0f;
+
+    private bool _calibrationDelayElapsed;
 
     private float _lastSubmitTimeSeconds = float.NegativeInfinity;
 
@@ -74,8 +114,53 @@ public class NativePoseInputSource : MonoBehaviour
     // siga tocando el recurso nativo una vez que empezamos a cerrarlo.
     private volatile bool _isShuttingDown;
 
+    // Público para StartupLoadingScreen: true recién cuando el modelo de
+    // MediaPipe terminó de cargar/compilar Y el pool de texturas está
+    // listo -- o sea, cuando SubmitLoop/ConsumeLoop ya pueden arrancar de
+    // verdad. Si la webcam no existe o el modelo falla en cargar (ver los
+    // Debug.LogError de más abajo), esto se queda en false para siempre a
+    // propósito -- mejor un loading screen que nunca se destapa (visible,
+    // diagnosticable en los logs) que arrancar el juego sin detección.
+    public bool IsReady { get; private set; }
+
+    // Públicos para DetectionSettingsPanel (pantalla de configuración del
+    // Menú Principal) -- solo LECTURA de estado interno que ya existía, no
+    // cambian nada de cómo funciona la detección real.
+    public MovementState CurrentState => _detector.State;
+    public bool IsCalibrated => _isCalibrated;
+    // True mientras dura calibrationStartDelaySeconds (todavía no arrancó
+    // ni a calibrar) -- para que la UI pueda mostrar "Preparate..." en vez
+    // de "Calibrando..." durante ese rato.
+    public bool IsWaitingToStartCalibration => !_isCalibrated && !_calibrationDelayElapsed;
+    // La textura cruda de la webcam, para mostrarla en un RawImage a modo
+    // de preview -- puede ser null hasta que Start() termine de abrirla.
+    public WebCamTexture PreviewTexture => _webCamTexture;
+
+    // Público para el botón "Recalibrar" de DetectionSettingsPanel --
+    // mismo reset que ya hace Start() al arrancar, para que el jugador
+    // pueda repetir la calibración sin tener que reiniciar la escena.
+    public void Recalibrate()
+    {
+        _isCalibrated = false;
+        // Acción explícita del jugador (apretó el botón) -- arranca YA, sin
+        // pasar por calibrationStartDelaySeconds otra vez.
+        _calibrationDelayElapsed = true;
+        _calibrator.Start();
+    }
+
     private void Awake()
     {
+        if (Instance != null && Instance != this)
+        {
+            // Solo este componente -- ver comentario grande arriba sobre
+            // por qué NO puede ser Destroy(gameObject) acá.
+            Destroy(this);
+            return;
+        }
+        Instance = this;
+
+        DontDestroyOnLoad(gameObject);
+
         _detector.OnJump += () => PlayerInputProvider.Instance?.RaiseJump();
         _detector.OnCrouch += () => PlayerInputProvider.Instance?.RaiseCrouch();
         _detector.OnStand += () => PlayerInputProvider.Instance?.RaiseStand();
@@ -145,18 +230,30 @@ public class NativePoseInputSource : MonoBehaviour
         // mismo buffer para el siguiente frame hasta que MediaPipe termine
         // con el anterior. Mismo patrón que usa el sample oficial del plugin.
         _textureFramePool = new TextureFramePool(_webCamTexture.width, _webCamTexture.height, TextureFormat.RGBA32, 10);
+        IsReady = true;
 
         _stopwatch.Start();
-        _calibrator.Start();
         _isCalibrated = false;
-        Debug.Log("[NativePoseInputSource] Calibrando -- quedate parado quieto frente a la cámara...");
+        _calibrationDelayElapsed = calibrationStartDelaySeconds <= 0f;
 
         // Dos corrutinas separadas: mandar frames nuevos a MediaPipe ahora
         // implica esperar una lectura asincrónica de GPU (ver SubmitLoop),
         // y no queremos que esa espera también pause el consumo de
-        // resultados ya listos.
+        // resultados ya listos. Arrancan YA, antes del delay de abajo, para
+        // que la webcam ya se vea en vivo (ej. el preview de la pantalla de
+        // Configuración) mientras el jugador todavía se está acomodando --
+        // lo único que se retrasa es el arranque de la calibración en sí.
         StartCoroutine(SubmitLoop());
         StartCoroutine(ConsumeLoop());
+
+        if (calibrationStartDelaySeconds > 0f)
+        {
+            yield return new WaitForSeconds(calibrationStartDelaySeconds);
+        }
+
+        _calibrator.Start();
+        _calibrationDelayElapsed = true;
+        Debug.Log("[NativePoseInputSource] Calibrando -- quedate parado quieto frente a la cámara...");
     }
 
     private IEnumerator ConsumeLoop()
@@ -179,6 +276,22 @@ public class NativePoseInputSource : MonoBehaviour
         while (true)
         {
             yield return waitForEndOfFrame;
+
+            // La webcam a veces se PARA SOLA en medio de una carga de
+            // escena pesada (confirmado con logs el 17/8: al cruzar de
+            // MainMenu a Gameplay.unity, _webCamTexture.isPlaying pasaba a
+            // false sin ningún error -- el driver de Windows no la
+            // "atiende" durante el hitch de carga, y deja de entregar
+            // frames para siempre si nadie la vuelve a pedir). Es el MISMO
+            // objeto WebCamTexture (esta instancia es persistente,
+            // DontDestroyOnLoad) -- no hace falta recrearlo, solo pedirle
+            // Play() de nuevo para que retome.
+            if (_webCamTexture != null && !_webCamTexture.isPlaying)
+            {
+                Debug.LogWarning("[NativePoseInputSource] La webcam se detuvo sola -- reintentando Play().");
+                _webCamTexture.Play();
+                continue;
+            }
 
             // La webcam solo entrega imagen nueva a su propio fps, pero
             // este loop corre una vez por frame renderizado. Sin este
@@ -292,6 +405,15 @@ public class NativePoseInputSource : MonoBehaviour
             _hasPendingResult = false;
         }
 
+        // Mientras dura calibrationStartDelaySeconds, _calibrator.Start()
+        // todavía no se llamó (ver Start() más arriba) -- ni tocarlo:
+        // llamar AddSample/IsReady/TimedOut antes de Start() leería un
+        // Stopwatch que nunca arrancó, con cuentas sin sentido.
+        if (!_calibrationDelayElapsed)
+        {
+            return;
+        }
+
         if (!_isCalibrated)
         {
             _calibrator.AddSample(landmarks);
@@ -318,6 +440,12 @@ public class NativePoseInputSource : MonoBehaviour
 
     private void OnDestroy()
     {
+        // También corre para un duplicado recién destruido en Awake() (ver
+        // Destroy(this) más arriba) -- ahí todos los campos de abajo
+        // siguen en null (esa instancia nunca llegó a Start()), así que
+        // todo esto es un no-op inofensivo en ese caso.
+        if (Instance == this) Instance = null;
+
         // Marcamos esto ANTES de tocar el recurso nativo: si justo hay una
         // detección en vuelo en el hilo de MediaPipe, su callback va a
         // verse este flag y salir sin hacer nada, en vez de seguir

@@ -46,6 +46,9 @@ public class ChunkSpawner : MonoBehaviour
     // duplicados exactos en la misma posición. Con este guard, Update() no
     // toca nada hasta que la corrutina inicial terminó del todo.
     private bool initialChunksReady;
+    // Público para StartupLoadingScreen: mismo flag de arriba, de solo
+    // lectura desde afuera.
+    public bool InitialChunksReady => initialChunksReady;
     private readonly List<GameObject> activeChunks = new List<GameObject>();
     // El Terrain del último chunk spawneado, para poder conectarlo como
     // "vecino" del próximo (ver SpawnNextChunk). Si tus chunks usan un

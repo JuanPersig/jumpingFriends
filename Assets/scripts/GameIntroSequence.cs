@@ -38,24 +38,49 @@ public class GameIntroSequence : MonoBehaviour
 
     private void Start()
     {
-        // Apagamos CameraFollow mientras dura la intro -- si no, su propio
-        // LateUpdate() pelearía cada frame contra el movimiento que hacemos
-        // acá, tirando la cámara para el lugar "normal" de entrada.
+        // Apagamos CameraFollow YA, en Start() -- pase lo que pase después
+        // (incluido StartupLoadingScreen tapando todo con la pantalla en
+        // negro y arrancando PlayIntro() recién más tarde), así su propio
+        // LateUpdate() nunca llega a pelear contra el movimiento que hace
+        // este script.
         if (cameraFollow != null) cameraFollow.enabled = false;
 
-        StartCoroutine(PlayIntro());
+        // OJO: ya NO se arranca PlayIntro() acá solo. Si hay un
+        // StartupLoadingScreen en la escena (pantalla en negro tapando el
+        // arranque hasta que MediaPipe + los chunks iniciales terminaron de
+        // cargar), es ÉL quien llama a BeginIntro() cuando corresponde. Si
+        // NO hay ningún StartupLoadingScreen en la escena, nadie llama a
+        // BeginIntro() y el juego queda congelado en el primer frame para
+        // siempre -- a propósito, mismo criterio que GameManager.
+        // HasGameplayStarted: mejor un freeze obvio (visible, fácil de
+        // diagnosticar) que una intro que a veces no corre sin avisar.
     }
 
-    private IEnumerator PlayIntro()
+    // Público para StartupLoadingScreen: pone al personaje en la pose de
+    // arranque (introClipName, ej. cuclillas) Y salta la cámara a
+    // introCameraStart, LO ANTES POSIBLE -- a propósito, SEPARADO de
+    // BeginIntro() de abajo, así queda asentado DURANTE el tiempo que dura
+    // la pantalla en negro en vez de recién al revelarse.
+    //
+    // El bug de "personaje cargando de a partes" que se investigó acá NO
+    // resultó ser esto (se probó reintentar el CrossFade varias veces y
+    // agregar una cámara de precalentado -- ninguna de las dos cambió
+    // nada) -- terminó siendo específico de las skins elegidas en el menú
+    // (PlayerCharacterSpawner), no de esta secuencia. Se saca esa
+    // complejidad de acá para no arriesgar más estabilidad por algo que no
+    // era la causa real; el diagnóstico de las skins sigue pendiente por
+    // separado.
+    public void ApplyStartPose()
+    {
+        StartCoroutine(ApplyStartPoseRoutine());
+    }
+
+    private IEnumerator ApplyStartPoseRoutine()
     {
         // Un frame de por medio antes de pedirle al Animator el estado de
-        // arranque -- mismo motivo que en MenuMouseJumper: el Animator del
-        // personaje (recién instanciado por PlayerCharacterSpawner en
-        // Awake()) todavía se está asentando en su estado por defecto en
-        // este instante exacto, y a veces el CrossFade pedido demasiado
-        // pronto no pega (a veces sí, a veces no, según el timing exacto
-        // entre frames -- por eso se veía intermitente, no ligado a un
-        // personaje puntual).
+        // arranque -- el Animator del personaje (recién instanciado por
+        // PlayerCharacterSpawner en Awake()) todavía se está asentando en
+        // su estado por defecto en este instante exacto.
         yield return null;
 
         if (player != null && !string.IsNullOrEmpty(introClipName))
@@ -64,11 +89,25 @@ public class GameIntroSequence : MonoBehaviour
         }
 
         Transform cam = cameraFollow != null ? cameraFollow.transform : null;
-
         if (cam != null && introCameraStart != null)
         {
             cam.SetPositionAndRotation(introCameraStart.position, introCameraStart.rotation);
         }
+    }
+
+    // Público para StartupLoadingScreen: arranca la cinemática de cámara
+    // de arranque (la pose del personaje Y la posición inicial de cámara
+    // YA se aplicaron antes, ver ApplyStartPose más arriba -- acá no hace
+    // falta volver a tocar ninguna de las dos). Separado de Start() para
+    // que la pantalla de carga controle cuándo arranca.
+    public void BeginIntro()
+    {
+        StartCoroutine(PlayIntro());
+    }
+
+    private IEnumerator PlayIntro()
+    {
+        Transform cam = cameraFollow != null ? cameraFollow.transform : null;
 
         float elapsed = 0f;
         while (elapsed < introDuration)
