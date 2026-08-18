@@ -16,6 +16,17 @@ public class CameraFollow : MonoBehaviour
     [SerializeField] private Transform target;
     [SerializeField] private float followSmoothness = 8f;
 
+    [Header("Multijugador (mapas de varios carriles)")]
+    [Tooltip("Destildado (default): sigue el X del target, igual que siempre -- así queda el " +
+             "single-player de hoy, sin tocar nada. Tildado: ignora el X del target y usa 'Fixed " +
+             "Center X' fijo -- pensado para mapas de varios carriles, donde 'target' solo sirve " +
+             "para leer el Z (todos los carriles avanzan igual, ver ObstacleSpawner) pero ningún " +
+             "carril en particular debería tironear la cámara hacia su propio X.")]
+    [SerializeField] private bool useFixedCenterX = false;
+    [Tooltip("X del centro de la arena para ESTE mapa (normalmente 0 si los carriles están " +
+             "ubicados simétricos alrededor de 0). Solo se usa si 'Use Fixed Center X' está tildado.")]
+    [SerializeField] private float fixedCenterX = 0f;
+
     private float lockedHeight;
     private bool initialized;
 
@@ -28,7 +39,8 @@ public class CameraFollow : MonoBehaviour
             initialized = true;
         }
 
-        Vector3 desiredPosition = new Vector3(target.position.x, lockedHeight, target.position.z);
+        float x = useFixedCenterX ? fixedCenterX : target.position.x;
+        Vector3 desiredPosition = new Vector3(x, lockedHeight, target.position.z);
 
         // Mismo suavizado independiente del framerate que ya usábamos.
         float t = 1f - Mathf.Exp(-followSmoothness * Time.deltaTime);

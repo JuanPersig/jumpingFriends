@@ -17,10 +17,34 @@ using UnityEngine;
 // por separado.
 public class ChunkSpawner : MonoBehaviour
 {
+    // Un set de chunks completo por cantidad de jugadores -- cada tamaño de
+    // mapa (1 a 4 carriles) es un grupo de prefabs totalmente aparte, hechos
+    // a mano en el Editor (ver comentario grande de arriba), NO el mismo
+    // chunk redimensionado en vivo. Envuelto en una clase en vez de un
+    // array-de-arrays porque el Inspector de Unity no serializa arrays
+    // anidados directamente (mismo motivo por el que ObstacleEntry existe
+    // como clase en ObstacleSpawner).
+    [System.Serializable]
+    public class ChunkSet
+    {
+        [Tooltip("Para cuántos jugadores es este set de chunks (1 a 4).")]
+        public int playerCount = 1;
+        [Tooltip("Los chunks de ESTE tamaño de mapa, armados a mano (piso + decoración).")]
+        public GameObject[] chunkPrefabs;
+    }
+
     [Header("Referencias")]
     [SerializeField] private Transform player;
-    [Tooltip("Tus trozos de escenario ya armados como prefabs (piso + árboles/rocas acomodados a mano).")]
-    [SerializeField] private GameObject[] chunkPrefabs;
+    [Tooltip("Un set de chunks por cada cantidad de jugadores que quieras soportar. Al arrancar, " +
+             "se usa el set cuyo 'Player Count' coincida con GameManager.RoundPlayerCount -- si no " +
+             "hay ninguno que coincida exacto, se usa el de mayor 'Player Count' que no la supere " +
+             "(con aviso en consola), para no dejar el juego sin escenario por un mapa que todavía " +
+             "no armaste.")]
+    [SerializeField] private ChunkSet[] chunkSetsByPlayerCount;
+    // Resuelto una sola vez en Start() a partir de chunkSetsByPlayerCount --
+    // de ahí en adelante todo el resto de este script sigue igual que antes
+    // (no le importa de dónde salió el array).
+    private GameObject[] chunkPrefabs;
 
     [Header("Config")]
     [Tooltip("Largo real de cada chunk en Z. TODOS los prefabs deben medir exactamente esto " +
@@ -57,7 +81,57 @@ public class ChunkSpawner : MonoBehaviour
 
     private void Start()
     {
+        ResolveChunkPrefabsForRound();
         StartCoroutine(SpawnInitialChunks());
+    }
+
+    // Elige, UNA sola vez al arrancar la ronda, qué set de chunks usar según
+    // GameManager.RoundPlayerCount (que ya está decidido antes de que esta
+    // escena cargue, ver el comentario en GameManager -- no hace falta
+    // volver a mirar esto nunca más durante la partida).
+    private void ResolveChunkPrefabsForRound()
+    {
+        int roundPlayerCount = GameManager.Instance != null ? GameManager.Instance.RoundPlayerCount : 1;
+
+        if (chunkSetsByPlayerCount == null || chunkSetsByPlayerCount.Length == 0)
+        {
+            Debug.LogError("[ChunkSpawner] 'Chunk Sets By Player Count' está vacío. No hay ningún " +
+                            "mapa armado, el spawner no va a generar nada.");
+            chunkPrefabs = null;
+            return;
+        }
+
+        ChunkSet exactMatch = null;
+        ChunkSet bestFallback = null; // el de mayor playerCount que no supere a roundPlayerCount
+        foreach (ChunkSet set in chunkSetsByPlayerCount)
+        {
+            if (set == null || set.chunkPrefabs == null || set.chunkPrefabs.Length == 0) continue;
+
+            if (set.playerCount == roundPlayerCount) exactMatch = set;
+            if (set.playerCount <= roundPlayerCount &&
+                (bestFallback == null || set.playerCount > bestFallback.playerCount))
+            {
+                bestFallback = set;
+            }
+        }
+
+        ChunkSet chosen = exactMatch ?? bestFallback;
+        if (chosen == null)
+        {
+            Debug.LogError($"[ChunkSpawner] No hay ningún set de chunks utilizable para " +
+                            $"{roundPlayerCount} jugador(es). Revisá 'Chunk Sets By Player Count'.");
+            chunkPrefabs = null;
+            return;
+        }
+
+        if (exactMatch == null)
+        {
+            Debug.LogWarning($"[ChunkSpawner] No hay un set armado específicamente para " +
+                              $"{roundPlayerCount} jugador(es) -- usando el de {chosen.playerCount} " +
+                              "como reemplazo. Armá el mapa correspondiente cuando puedas.");
+        }
+
+        chunkPrefabs = chosen.chunkPrefabs;
     }
 
     // Cada chunk trae ~300 objetos anidados (árboles/rocas/decoración) --

@@ -6,6 +6,16 @@ public class GameManager : Singleton<GameManager>
     [Header("Vidas")]
     [SerializeField] private int startingLives = 3;
 
+    [Header("Multijugador")]
+    [Tooltip("Cantidad de jugadores de ESTA ronda (1 a 4). Hoy se configura acá a mano para " +
+             "poder armar/probar mapas de distinto tamaño en el Editor sin depender de la red. " +
+             "Cuando exista la sala de espera de verdad (Netcode/Lobby), esto va a quedar fijado " +
+             "por la cantidad real de jugadores conectados ANTES de cargar Gameplay.unity -- ver " +
+             "jumping-friends-multiplayer-plan: el tamaño de la partida se decide en el lobby y " +
+             "no cambia más una vez arrancada, así que leerlo una sola vez acá en Awake alcanza.")]
+    [SerializeField] private int roundPlayerCount = 1;
+    public int RoundPlayerCount => roundPlayerCount;
+
     [Header("Debug")]
     [Tooltip("Debug: tildado, los choques no restan vidas (útil para probar cosas — " +
              "cámara, menú, obstáculos nuevos — sin que la partida se corte). Dejalo " +

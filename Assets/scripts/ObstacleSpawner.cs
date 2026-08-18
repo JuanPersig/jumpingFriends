@@ -13,7 +13,23 @@ using UnityEngine;
 // constante genera basura (GC) todo el tiempo, y una recolección de basura
 // grande puede trabar un frame justo en el peor momento (cuando más
 // precisión de salto hace falta). Reutilizar evita ese costo entero.
-public class ObstacleSpawner : Singleton<ObstacleSpawner>
+//
+// MULTI-CARRIL (17/8): antes era Singleton<T> con un solo "player" -- ahora
+// es un "director" único (sigue habiendo UNA sola instancia en la escena
+// por diseño, pero YA NO hereda Singleton<T>: nada más en el proyecto
+// llamaba a ObstacleSpawner.Instance, así que no hacía falta ese patrón) que
+// tira la MISMA decisión de tipo+espaciado una sola vez y la replica como
+// una copia física por cada carril activo (lanePlayers). Es a propósito UN
+// solo lugar decidiendo, no un spawner por carril con su propio azar: así
+// la secuencia queda sincronizada gratis (sin mantener varios RNG iguales)
+// y es el punto natural donde más adelante Netcode va a enganchar (el host
+// decide acá, los clientes reciben el resultado).
+//
+// Todos los carriles avanzan en Z al mismo ritmo (todos leen
+// DifficultyManager.Instance.CurrentSpeed, que es compartido) -- por eso
+// alcanza con UNA sola referencia de progreso en Z (lanePlayers[0]), aunque
+// cada carril tenga su propio X.
+public class ObstacleSpawner : MonoBehaviour
 {
     // Cada obstáculo tiene su propio prefab Y su propia altura de aparición.
     // OJO: Instantiate(prefab, spawnPos, ...) siempre PISA la posición que
@@ -30,7 +46,11 @@ public class ObstacleSpawner : Singleton<ObstacleSpawner>
     }
 
     [Header("Referencias")]
-    [SerializeField] private Transform player;
+    [Tooltip("Un Transform por carril activo (el 'player' de cada RunnerController), en el " +
+             "orden que quieras. Para 1 jugador (single-player de hoy), dejá un solo elemento -- " +
+             "el comportamiento es idéntico al de antes. El elemento [0] se usa además como " +
+             "referencia de progreso en Z (todos avanzan igual, ver comentario de arriba).")]
+    [SerializeField] private Transform[] lanePlayers;
     [SerializeField] private ObstacleEntry[] obstaclePrefabs;
 
     [Header("Spawning")]
@@ -119,7 +139,16 @@ public class ObstacleSpawner : Singleton<ObstacleSpawner>
 
     private void Start()
     {
-        nextSpawnZ = player.position.z + spawnDistanceAhead;
+        if (lanePlayers == null || lanePlayers.Length == 0 || lanePlayers[0] == null)
+        {
+            Debug.LogError("[ObstacleSpawner] 'Lane Players' está vacío o el elemento [0] no tiene " +
+                            "un Transform asignado. El spawner no puede saber de dónde leer el " +
+                            "progreso en Z y no va a generar nada.");
+            enabled = false;
+            return;
+        }
+
+        nextSpawnZ = lanePlayers[0].position.z + spawnDistanceAhead;
 
         // Si en el Inspector agrandaste el array pero dejaste algún slot
         // sin arrastrarle un prefab, ese slot queda como referencia "sin
@@ -169,7 +198,7 @@ public class ObstacleSpawner : Singleton<ObstacleSpawner>
         float minReactionSeconds = Mathf.Lerp(minReactionSecondsEarly, minReactionSecondsLate, currentProgress01);
         float effectiveSpacing = Mathf.Max(spacingBetweenObstacles, minReactionSeconds * currentSpeed);
 
-        while (nextSpawnZ < player.position.z + spawnDistanceAhead)
+        while (nextSpawnZ < lanePlayers[0].position.z + spawnDistanceAhead)
         {
             SpawnObstacleAt(nextSpawnZ);
             nextSpawnZ += effectiveSpacing;
@@ -178,14 +207,22 @@ public class ObstacleSpawner : Singleton<ObstacleSpawner>
         CleanupBehindPlayer();
     }
 
+    // UNA sola decisión de tipo (PickNextEntry) para este Z, replicada como
+    // una instancia física independiente en cada carril -- así todos ven
+    // exactamente el mismo obstáculo en el mismo punto, y cada uno choca (o
+    // no) el suyo propio sin afectar a los demás carriles.
     private void SpawnObstacleAt(float z)
     {
         if (validObstaclePrefabs == null || validObstaclePrefabs.Count == 0) return;
 
         ObstacleEntry entry = PickNextEntry();
-        Vector3 spawnPos = new Vector3(player.position.x, spawnHeight + entry.heightOffset, z);
-        GameObject obstacle = GetFromPoolOrInstantiate(entry.prefab, spawnPos);
-        activeObstacles.Add(obstacle);
+        foreach (Transform lane in lanePlayers)
+        {
+            if (lane == null) continue; // carril sin usar todavía (ver Lane Players en el Inspector)
+            Vector3 spawnPos = new Vector3(lane.position.x, spawnHeight + entry.heightOffset, z);
+            GameObject obstacle = GetFromPoolOrInstantiate(entry.prefab, spawnPos);
+            activeObstacles.Add(obstacle);
+        }
     }
 
     // Elige el próximo tipo de obstáculo con memoria de qué salió antes:
@@ -298,7 +335,7 @@ public class ObstacleSpawner : Singleton<ObstacleSpawner>
             activeObstacles,
             obstacle => obstacle == null || !obstacle.activeSelf,
             obstacle => obstacle.transform.position.z,
-            player.position.z - despawnDistanceBehind,
+            lanePlayers[0].position.z - despawnDistanceBehind,
             ReturnObstacle);
     }
 }
