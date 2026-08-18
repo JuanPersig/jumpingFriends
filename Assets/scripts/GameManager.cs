@@ -81,4 +81,17 @@ public class GameManager : Singleton<GameManager>
     {
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
+
+    // Público para el botón "Menú" del panel de Game Over (ver
+    // UIManager.OnMainMenuButtonPressed). Por nombre, no por buildIndex --
+    // a diferencia de RestartGame (que siempre tiene que ser "la escena
+    // actual", sea cual sea), acá el destino es fijo, así que el nombre es
+    // más explícito y no depende de qué posición tenga en Build Settings.
+    // Los singletons persistentes (NativePoseInputSource, PlayerInputProvider,
+    // CharacterSelection) sobreviven el cambio -- no hace falta recalibrar
+    // ni volver a elegir personaje al volver a jugar.
+    public void ReturnToMainMenu()
+    {
+        SceneManager.LoadScene("MainMenu");
+    }
 }

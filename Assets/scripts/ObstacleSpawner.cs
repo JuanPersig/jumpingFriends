@@ -35,15 +35,35 @@ public class ObstacleSpawner : Singleton<ObstacleSpawner>
 
     [Header("Spawning")]
     [SerializeField] private float spawnDistanceAhead = 40f;
-    [SerializeField] private float spacingBetweenObstacles = 12f;
     [SerializeField] private float despawnDistanceBehind = 15f;
     [SerializeField] private float spawnHeight = 0f; // altura base (piso); cada entrada le suma su heightOffset
 
+    [Header("Espaciado entre obstáculos (curva dinámica)")]
+    // Antes esto era un solo valor fijo (12) de punta a punta -- la
+    // dificultad igual subía sola porque la velocidad crece mientras el
+    // espaciado en distancia se mantenía igual (menos tiempo real entre
+    // obstáculos). Ahora, mismo criterio que minReactionSeconds/
+    // switchTypeChance: el espaciado en sí también se va achicando con
+    // Progress01, así la curva pega más fuerte todavía sobre el final.
+    //
+    // OJO -- interactúa con el piso de reacción de abajo: el espaciado
+    // efectivo NUNCA baja de minReactionSeconds * velocidad actual (ver
+    // Update). Si "Late" de acá queda muy por debajo de ese piso a
+    // velocidad máxima, el piso es quien termina mandando igual -- para
+    // que este ajuste se note de punta a punta, puede hacer falta bajar
+    // también Min Reaction Seconds Late.
+    [Tooltip("Distancia entre obstáculos AL ARRANCAR la partida — la más generosa.")]
+    [SerializeField] private float spacingBetweenObstaclesEarly = 12f;
+    [Tooltip("Distancia entre obstáculos a velocidad MÁXIMA — la más exigente.")]
+    [SerializeField] private float spacingBetweenObstaclesLate = 8f;
+
     [Header("Piso de reacción (curva dinámica)")]
-    // spacingBetweenObstacles es una distancia FIJA, pero la velocidad
+    // El espaciado de arriba, aunque ahora también se achica solo con
+    // Progress01, sigue siendo una distancia -- y la velocidad
     // (DifficultyManager) sube todo el tiempo -> el tiempo REAL entre
-    // obstáculos se va achicando solo (a propósito, es la curva de
-    // dificultad). El problema: RunnerController.HandleJump() ignora
+    // obstáculos se achica más rápido todavía de lo que el espaciado por sí
+    // solo sugiere (a propósito, es la curva de dificultad). El problema:
+    // RunnerController.HandleJump() ignora
     // cualquier input mientras ya está saltando (jumpDuration), así que a
     // velocidad alta el juego puede terminar pidiendo una reacción en menos
     // tiempo del que dura, sin querer, el propio salto -> el personaje se
@@ -138,12 +158,14 @@ public class ObstacleSpawner : Singleton<ObstacleSpawner>
         if (GameManager.Instance != null && !GameManager.Instance.HasGameplayStarted) return;
 
         // Progreso 0->1 de la partida (mismo que usa DifficultyManager para
-        // subir la velocidad): interpola el piso de reacción entre Early
-        // (generoso) y Late (exigente). A velocidad baja igual manda
-        // spacingBetweenObstacles (distancia fija) porque el piso, aunque
-        // ya empezó a endurecer, todavía da menos que esa distancia.
+        // subir la velocidad): interpola tanto el espaciado base como el
+        // piso de reacción entre Early (generoso) y Late (exigente). A
+        // velocidad baja igual puede mandar el espaciado base (aunque ya
+        // esté endureciendo) porque el piso, recién arrancando, todavía da
+        // menos que esa distancia.
         float currentSpeed = DifficultyManager.Instance != null ? DifficultyManager.Instance.CurrentSpeed : 0f;
         currentProgress01 = DifficultyManager.Instance != null ? DifficultyManager.Instance.Progress01 : 0f;
+        float spacingBetweenObstacles = Mathf.Lerp(spacingBetweenObstaclesEarly, spacingBetweenObstaclesLate, currentProgress01);
         float minReactionSeconds = Mathf.Lerp(minReactionSecondsEarly, minReactionSecondsLate, currentProgress01);
         float effectiveSpacing = Mathf.Max(spacingBetweenObstacles, minReactionSeconds * currentSpeed);
 
@@ -261,34 +283,22 @@ public class ObstacleSpawner : Singleton<ObstacleSpawner>
         pool.Enqueue(obstacle);
     }
 
+    // null (destruido) o inactivo (ya devuelto al pool por otro camino) ->
+    // solo se saca de la lista, SIN llamar a ReturnObstacle de nuevo (si no,
+    // quedaría encolado dos veces en el pool, y dos obstáculos "distintos"
+    // futuros terminarían siendo en realidad el mismo GameObject).
+    //
+    // Hoy ningún otro camino devuelve obstáculos (ver ReturnObstacle), así
+    // que esta guarda no debería dispararse nunca — se deja igual porque el
+    // costo es un chequeo por frame y el error que evita (dos obstáculos que
+    // son el mismo objeto) es silencioso y muy molesto de diagnosticar.
     private void CleanupBehindPlayer()
     {
-        for (int i = activeObstacles.Count - 1; i >= 0; i--)
-        {
-            GameObject obstacle = activeObstacles[i];
-
-            // null (destruido) o inactivo (ya devuelto al pool por otro
-            // camino) -> solo sacarlo de la lista, SIN llamar a
-            // ReturnObstacle de nuevo (si no, quedaría encolado dos veces en
-            // el pool, y dos obstáculos "distintos" futuros terminarían
-            // siendo en realidad el mismo GameObject).
-            //
-            // Hoy ningún otro camino devuelve obstáculos (ver ReturnObstacle),
-            // así que esta guarda no debería dispararse nunca — se deja igual
-            // porque el costo es un chequeo por frame y el error que evita
-            // (dos obstáculos que son el mismo objeto) es silencioso y muy
-            // molesto de diagnosticar.
-            if (obstacle == null || !obstacle.activeSelf)
-            {
-                activeObstacles.RemoveAt(i);
-                continue;
-            }
-
-            if (obstacle.transform.position.z < player.position.z - despawnDistanceBehind)
-            {
-                ReturnObstacle(obstacle);
-                activeObstacles.RemoveAt(i);
-            }
-        }
+        SpawnerCleanupUtility.CleanupBehind(
+            activeObstacles,
+            obstacle => obstacle == null || !obstacle.activeSelf,
+            obstacle => obstacle.transform.position.z,
+            player.position.z - despawnDistanceBehind,
+            ReturnObstacle);
     }
 }

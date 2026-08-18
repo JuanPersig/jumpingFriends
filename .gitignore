@@ -51,6 +51,10 @@ sysinfo.txt
 *.unitypackage
 *.app
 
+# Carpeta de build compilada del juego (no matchea [Bb]uild/ ni [Bb]uilds/
+# por el "2" pegado al nombre) — se deja sin trackear a propósito.
+Build2/
+
 # Archivos temporales del sistema operativo
 .DS_Store
 Thumbs.db

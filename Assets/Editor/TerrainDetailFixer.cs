@@ -393,20 +393,5 @@ public static class TerrainDetailFixer
         bool ok = File.Exists(fullOutPath);
         long len = ok ? new FileInfo(fullOutPath).Length : -1;
         Debug.Log($"[TerrainDetailFixer] Reporte en: {fullOutPath}  (existe={ok}, bytes={len})");
-
-        // Diagnóstico extra: por qué un archivo que Unity confirma que existe
-        // no aparece para procesos externos -- listar el directorio tal como
-        // lo ve Unity, y volver a chequear un par de segundos después.
-        try
-        {
-            string dir = Path.GetDirectoryName(fullOutPath);
-            var filesNow = Directory.GetFiles(dir);
-            Debug.Log($"[TerrainDetailFixer] Directory.GetFiles({dir}) ve {filesNow.Length} archivos: {string.Join(" | ", filesNow.Select(Path.GetFileName))}");
-        }
-        catch (System.Exception e) { Debug.Log($"[TerrainDetailFixer] Directory.GetFiles falló: {e.Message}"); }
-
-        System.Threading.Thread.Sleep(2000);
-        bool okAfter = File.Exists(fullOutPath);
-        Debug.Log($"[TerrainDetailFixer] Re-chequeo 2s después: existe={okAfter}");
     }
 }

@@ -111,9 +111,18 @@ public class UIManager : MonoBehaviour
 
         gameOverPanel.SetActive(true);
 
+        // El HUD de "mientras se juega" (vidas/puntaje) ya no tiene sentido
+        // una vez que se muestra el panel de Game Over -- el puntaje final
+        // se ve en finalScoreText, y las vidas ya no importan.
+        if (livesText != null) livesText.gameObject.SetActive(false);
+        if (scoreText != null) scoreText.gameObject.SetActive(false);
+
         if (finalScoreText != null && ScoreManager.Instance != null)
         {
-            finalScoreText.text = $"Puntaje final: {ScoreManager.Instance.CurrentScore:0}";
+            // Solo el número -- el "Puntaje final fue" ahora es un texto fijo
+            // aparte en la escena (GameObject "FinalScore"), no hace falta
+            // repetirlo acá.
+            finalScoreText.text = $"{ScoreManager.Instance.CurrentScore:0}";
         }
     }
 
@@ -122,5 +131,11 @@ public class UIManager : MonoBehaviour
     public void OnRestartButtonPressed()
     {
         GameManager.Instance?.RestartGame();
+    }
+
+    // Enganchá esto al OnClick() de un botón "Menú" en el panel de Game Over.
+    public void OnMainMenuButtonPressed()
+    {
+        GameManager.Instance?.ReturnToMainMenu();
     }
 }

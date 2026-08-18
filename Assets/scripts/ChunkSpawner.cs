@@ -154,26 +154,16 @@ public class ChunkSpawner : MonoBehaviour
         }
     }
 
+    // Un chunk se borra recién cuando su PUNTA DE ATRÁS (posición + el largo
+    // completo) ya quedó bien lejos del jugador — así no desaparece
+    // mientras todavía se ve una parte adelante.
     private void CleanupBehindPlayer()
     {
-        for (int i = activeChunks.Count - 1; i >= 0; i--)
-        {
-            GameObject chunk = activeChunks[i];
-            if (chunk == null)
-            {
-                activeChunks.RemoveAt(i);
-                continue;
-            }
-
-            // Un chunk se borra recién cuando su PUNTA DE ATRÁS (posición +
-            // el largo completo) ya quedó bien lejos del jugador — así no
-            // desaparece mientras todavía se ve una parte adelante.
-            float chunkBackEdgeZ = chunk.transform.position.z + chunkLength;
-            if (chunkBackEdgeZ < player.position.z - despawnDistanceBehind)
-            {
-                Destroy(chunk);
-                activeChunks.RemoveAt(i);
-            }
-        }
+        SpawnerCleanupUtility.CleanupBehind(
+            activeChunks,
+            chunk => chunk == null,
+            chunk => chunk.transform.position.z + chunkLength,
+            player.position.z - despawnDistanceBehind,
+            chunk => Destroy(chunk));
     }
 }

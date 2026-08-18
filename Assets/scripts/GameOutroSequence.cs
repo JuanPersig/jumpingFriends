@@ -83,27 +83,17 @@ public class GameOutroSequence : MonoBehaviour
 
         if (cam != null && deathCameraAnchor != null)
         {
-            Vector3 startPos = cam.position;
-            Quaternion startRot = cam.rotation;
-            float elapsed = 0f;
-
-            // Leemos deathCameraAnchor.position/.rotation DE NUEVO en cada
-            // vuelta del while, no una sola vez al principio -- es hijo del
-            // jugador, y PlayDeathAnimation() sigue moviendo su Y en tiempo
-            // real mientras el personaje cae (ver DeathYOffsetRoutine en
-            // RunnerController), así que el ancla se hunde CON él y el Lerp
-            // apunta siempre al lugar correcto, no a una foto vieja de
-            // antes de que empezara a caer.
-            while (elapsed < cameraTransitionDuration)
-            {
-                elapsed += Time.deltaTime;
-                float t = Mathf.Clamp01(elapsed / cameraTransitionDuration);
-                cam.position = Vector3.Lerp(startPos, deathCameraAnchor.position, t);
-                cam.rotation = Quaternion.Slerp(startRot, deathCameraAnchor.rotation, t);
-                yield return null;
-            }
-
-            cam.SetPositionAndRotation(deathCameraAnchor.position, deathCameraAnchor.rotation);
+            // Compartido con GameIntroSequence.PlayIntro (ver CameraLerpUtility).
+            // Pasamos `cam` como punto de partida (en vez de un Transform fijo
+            // como en la intro) para capturar "donde esté la cámara AHORA MISMO"
+            // -- se lee una sola vez al arrancar, así que es exactamente el
+            // mismo snapshot que antes. `deathCameraAnchor` (el target) se sigue
+            // leyendo EN VIVO adentro del helper: es hijo del jugador, y
+            // PlayDeathAnimation() sigue moviendo su Y en tiempo real mientras
+            // el personaje cae (ver DeathYOffsetRoutine en RunnerController),
+            // así que el ancla se hunde CON él y el Lerp apunta siempre al
+            // lugar correcto, no a una foto vieja de antes de que empezara a caer.
+            yield return CameraLerpUtility.LerpTo(cam, cam, deathCameraAnchor, cameraTransitionDuration);
         }
 
         yield return new WaitForSeconds(holdBeforeGameOverPanelSeconds);

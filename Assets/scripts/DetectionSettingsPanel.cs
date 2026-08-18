@@ -93,6 +93,17 @@ public class DetectionSettingsPanel : MonoBehaviour
     {
         if (stateLabel == null || poseInputSource == null) return;
 
+        // Chequeo primero: sin esto, un error real (cámara tomada por otro
+        // programa, desenchufada) se quedaba mostrando "Iniciando cámara..."
+        // o "Preparate..." para siempre, sin ninguna pista de que algo
+        // estaba mal (ver HasCameraError en NativePoseInputSource).
+        if (poseInputSource.HasCameraError)
+        {
+            stateLabel.text = "No se pudo conectar la cámara. Revisá que esté enchufada y que ningún " +
+                               "otro programa la esté usando (Zoom, Teams, OBS, etc.).";
+            return;
+        }
+
         if (poseInputSource.PreviewTexture == null)
         {
             stateLabel.text = "Iniciando cámara...";

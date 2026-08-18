@@ -86,6 +86,11 @@ public class GameIntroSequence : MonoBehaviour
         if (player != null && !string.IsNullOrEmpty(introClipName))
         {
             player.PlayCustomAnimation(introClipName);
+            // La rotación que se ve bien para la animación de correr no es
+            // la misma que la que se ve bien para la pose de arranque (ver
+            // RunnerController.startPoseModelYRotation/runningModelYRotation)
+            // -- se ajusta acá, junto con la animación, no antes.
+            player.ApplyStartPoseRotation();
         }
 
         Transform cam = cameraFollow != null ? cameraFollow.transform : null;
@@ -109,20 +114,11 @@ public class GameIntroSequence : MonoBehaviour
     {
         Transform cam = cameraFollow != null ? cameraFollow.transform : null;
 
-        float elapsed = 0f;
-        while (elapsed < introDuration)
-        {
-            elapsed += Time.deltaTime;
-
-            if (cam != null && introCameraStart != null && introCameraEnd != null)
-            {
-                float t = Mathf.Clamp01(elapsed / introDuration);
-                cam.position = Vector3.Lerp(introCameraStart.position, introCameraEnd.position, t);
-                cam.rotation = Quaternion.Slerp(introCameraStart.rotation, introCameraEnd.rotation, t);
-            }
-
-            yield return null;
-        }
+        // Compartido con GameOutroSequence.PlayOutro (ver CameraLerpUtility) --
+        // acá el punto de partida es el propio introCameraStart, fijo. Espera
+        // introDuration completos pase lo que pase (sin gate condicional),
+        // aunque falte algún Transform.
+        yield return CameraLerpUtility.LerpTo(cam, introCameraStart, introCameraEnd, introDuration);
 
         // A partir de acá, CameraFollow retoma el control (solo posición,
         // como siempre) y el juego arranca de verdad.
@@ -130,8 +126,13 @@ public class GameIntroSequence : MonoBehaviour
 
         // Si pusimos una animación distinta para la intro, volvemos a la de
         // correr normal -- si no, esto es un no-op inofensivo (misma que ya
-        // estaba sonando).
-        if (player != null) player.ResumeRunAnimation();
+        // estaba sonando). La rotación del modelo también vuelve a la que
+        // corresponde para correr (ver ApplyStartPoseRotation más arriba).
+        if (player != null)
+        {
+            player.ResumeRunAnimation();
+            player.ApplyRunningRotation();
+        }
 
         GameManager.Instance?.BeginGameplay();
     }

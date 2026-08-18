@@ -67,6 +67,14 @@ public class NativePoseInputSource : MonoBehaviour
     [SerializeField] private int requestedWidth = 640;
     [SerializeField] private int requestedHeight = 480;
     [SerializeField] private int requestedFps = 30;
+    [Tooltip("Si la webcam no arranca a tiempo (ej. otro programa ya la tiene abierta, o un " +
+             "error de driver tipo 'Could not connect pins - RenderStream()'), cuántos segundos " +
+             "esperar antes de rendirse en vez de quedarse colgado para siempre.")]
+    [SerializeField] private float webcamStartTimeoutSeconds = 8f;
+    [Tooltip("Si la webcam deja de responder A MITAD DE PARTIDA (se desenchufó, otro programa " +
+             "la agarró) y el reintento automático de abajo no la recupera en este tiempo, se " +
+             "considera un error real (HasCameraError) en vez de un hipo pasajero de un par de frames.")]
+    [SerializeField] private float cameraErrorAfterSeconds = 3f;
 
     [Header("Límite de frecuencia de detección")]
     // Muchas webcams ignoran requestedFps y siguen entregando frames a su
@@ -90,6 +98,12 @@ public class NativePoseInputSource : MonoBehaviour
     private bool _calibrationDelayElapsed;
 
     private float _lastSubmitTimeSeconds = float.NegativeInfinity;
+    // Desde cuándo la webcam viene sin responder (null = está bien ahora
+    // mismo) -- ver SubmitLoop. Distinto de HasCameraError: esto arranca a
+    // contar apenas se nota el problema, HasCameraError recién se prende si
+    // se sostiene más de cameraErrorAfterSeconds (para no mostrarle un
+    // cartel de error al jugador por un hipo de un solo frame).
+    private float? _webcamDownSinceSeconds;
 
     private WebCamTexture _webCamTexture;
     private TextureFramePool _textureFramePool;
@@ -105,10 +119,27 @@ public class NativePoseInputSource : MonoBehaviour
     // una cola de todos los frames, como sí la necesita PlayerInputProvider
     // para no perderse ningún evento UDP) y lo consumimos en Update().
     private readonly object _resultLock = new object();
-    private List<PoseLandmarkSample> _pendingLandmarks;
+    private IReadOnlyList<PoseLandmarkSample> _pendingLandmarks;
     private float _pendingTimestampSeconds;
     private bool _hasPendingResult;
     private float _lastResultTimestampSeconds = float.NegativeInfinity;
+
+    // Ring buffer chico de arrays reusables (33 landmarks, el tamaño real
+    // de un resultado completo de BlazePose) para no alocar una List nueva
+    // en OnPoseLandmarkerResult -- corre hasta 10 veces por segundo durante
+    // toda la partida. Es seguro porque ConsumePendingResult (hilo
+    // principal) siempre termina de leer un resultado dentro del mismo
+    // frame en que lo recibe (corre cada WaitForEndOfFrame, <16ms), mucho
+    // antes de que este mismo slot del ring vuelva a pisarse (recién
+    // LandmarkBufferCount resultados después, ~400ms al ritmo máximo de
+    // minSecondsBetweenDetections).
+    private const int LandmarkBufferCount = 4;
+    private readonly PoseLandmarkSample[][] _landmarkBuffers =
+    {
+        new PoseLandmarkSample[33], new PoseLandmarkSample[33],
+        new PoseLandmarkSample[33], new PoseLandmarkSample[33],
+    };
+    private int _nextLandmarkBufferIndex;
 
     // Evita que OnPoseLandmarkerResult (que corre en un hilo de MediaPipe)
     // siga tocando el recurso nativo una vez que empezamos a cerrarlo.
@@ -122,6 +153,14 @@ public class NativePoseInputSource : MonoBehaviour
     // propósito -- mejor un loading screen que nunca se destapa (visible,
     // diagnosticable en los logs) que arrancar el juego sin detección.
     public bool IsReady { get; private set; }
+
+    // Público para DetectionSettingsPanel/CameraErrorOverlay (Gameplay):
+    // true si la webcam nunca pudo abrir, el modelo no cargó, no hay
+    // ninguna cámara conectada, o la webcam dejó de responder en medio de
+    // una partida por más de cameraErrorAfterSeconds. Se apaga solo si la
+    // cámara vuelve a responder -- no hace falta ningún botón de reintentar,
+    // el reintento automático de SubmitLoop ya lo venía haciendo.
+    public bool HasCameraError { get; private set; }
 
     // Públicos para DetectionSettingsPanel (pantalla de configuración del
     // Menú Principal) -- solo LECTURA de estado interno que ya existía, no
@@ -171,12 +210,37 @@ public class NativePoseInputSource : MonoBehaviour
         if (WebCamTexture.devices.Length == 0)
         {
             Debug.LogError("[NativePoseInputSource] No se encontró ninguna cámara. La detección nativa no va a funcionar.");
+            HasCameraError = true;
             yield break;
         }
 
         _webCamTexture = new WebCamTexture(WebCamTexture.devices[0].name, requestedWidth, requestedHeight, requestedFps);
         _webCamTexture.Play();
-        yield return new WaitUntil(() => _webCamTexture.width > 16);
+
+        // OJO -- antes esto era un WaitUntil SIN límite de tiempo: si la
+        // webcam nunca arrancaba de verdad (ej. otro programa ya la tenía
+        // abierta, error de driver tipo "Could not connect pins -
+        // RenderStream()"), esta corrutina se quedaba esperando PARA SIEMPRE
+        // y nada de lo que sigue (calibración, IsReady) llegaba a correr --
+        // visto en vivo el 17/8, dejaba la pantalla de Configuración
+        // colgada en "Preparate..." sin ningún error visible para el
+        // jugador. Con tope de tiempo, si no arranca, avisamos y salimos
+        // en vez de colgar todo (mismo criterio que StartupLoadingScreen).
+        float elapsedWaitingWebcam = 0f;
+        while (_webCamTexture.width <= 16 && elapsedWaitingWebcam < webcamStartTimeoutSeconds)
+        {
+            elapsedWaitingWebcam += Time.deltaTime;
+            yield return null;
+        }
+
+        if (_webCamTexture.width <= 16)
+        {
+            Debug.LogError("[NativePoseInputSource] La webcam no respondió a tiempo. Revisá que no la esté " +
+                            "usando otro programa (Zoom, Teams, la app Cámara, OBS, etc.) y que esté bien " +
+                            "conectada. La detección nativa no va a funcionar.");
+            HasCameraError = true;
+            yield break;
+        }
 
         // Algunas webcams ignoran en silencio la resolución/fps pedidos y
         // entregan la suya propia -- confirmamos acá qué terminó usando de
@@ -187,6 +251,7 @@ public class NativePoseInputSource : MonoBehaviour
         if (!File.Exists(modelPath))
         {
             Debug.LogError($"[NativePoseInputSource] No se encontró el modelo en '{modelPath}'. ¿Falta copiarlo a StreamingAssets?");
+            HasCameraError = true;
             yield break;
         }
 
@@ -220,6 +285,7 @@ public class NativePoseInputSource : MonoBehaviour
         if (loadError != null)
         {
             Debug.LogError($"[NativePoseInputSource] Falló la carga del modelo de pose: {loadError}");
+            HasCameraError = true;
             yield break;
         }
         _poseLandmarker = createdLandmarker;
@@ -288,9 +354,31 @@ public class NativePoseInputSource : MonoBehaviour
             // Play() de nuevo para que retome.
             if (_webCamTexture != null && !_webCamTexture.isPlaying)
             {
-                Debug.LogWarning("[NativePoseInputSource] La webcam se detuvo sola -- reintentando Play().");
+                if (_webcamDownSinceSeconds == null)
+                {
+                    _webcamDownSinceSeconds = (float)_stopwatch.Elapsed.TotalSeconds;
+                    Debug.LogWarning("[NativePoseInputSource] La webcam se detuvo sola -- reintentando Play().");
+                }
+                else if (!HasCameraError && (float)_stopwatch.Elapsed.TotalSeconds - _webcamDownSinceSeconds.Value >= cameraErrorAfterSeconds)
+                {
+                    // Se sostiene desde hace rato (no fue un hipo de un solo
+                    // frame) -- esto es un desenchufado/error real a mitad
+                    // de partida, no algo que se vaya a resolver solo en el
+                    // próximo frame.
+                    Debug.LogError("[NativePoseInputSource] La webcam sigue sin responder después de varios segundos.");
+                    HasCameraError = true;
+                }
                 _webCamTexture.Play();
                 continue;
+            }
+
+            if (_webcamDownSinceSeconds != null)
+            {
+                // Se recuperó (sola, o porque el jugador la reconectó) --
+                // apagamos el error automáticamente, sin necesidad de
+                // ningún botón de reintentar.
+                _webcamDownSinceSeconds = null;
+                HasCameraError = false;
             }
 
             // La webcam solo entrega imagen nueva a su propio fps, pero
@@ -361,12 +449,33 @@ public class NativePoseInputSource : MonoBehaviour
 
         float timestampSeconds = timestampMillisec / 1000f;
 
-        var landmarks = new List<PoseLandmarkSample>(33);
+        IReadOnlyList<PoseLandmarkSample> landmarks = System.Array.Empty<PoseLandmarkSample>();
         if (result.poseLandmarks != null && result.poseLandmarks.Count > 0)
         {
-            foreach (var landmark in result.poseLandmarks[0].landmarks)
+            var rawLandmarks = result.poseLandmarks[0].landmarks;
+            if (rawLandmarks.Count == 33)
             {
-                landmarks.Add(new PoseLandmarkSample(landmark.y, landmark.visibility ?? 0f));
+                // Caso normal (BlazePose siempre da los 33 landmarks
+                // completos): reusamos un slot del ring buffer en vez de
+                // alocar acá -- ver comentario de _landmarkBuffers arriba.
+                PoseLandmarkSample[] buffer = _landmarkBuffers[_nextLandmarkBufferIndex];
+                _nextLandmarkBufferIndex = (_nextLandmarkBufferIndex + 1) % LandmarkBufferCount;
+                for (int i = 0; i < 33; i++)
+                {
+                    buffer[i] = new PoseLandmarkSample(rawLandmarks[i].y, rawLandmarks[i].visibility ?? 0f);
+                }
+                landmarks = buffer;
+            }
+            else
+            {
+                // Caso raro/inesperado (cantidad distinta a 33) -- fallback
+                // seguro sin tocar el ring buffer.
+                var fallback = new PoseLandmarkSample[rawLandmarks.Count];
+                for (int i = 0; i < rawLandmarks.Count; i++)
+                {
+                    fallback[i] = new PoseLandmarkSample(rawLandmarks[i].y, rawLandmarks[i].visibility ?? 0f);
+                }
+                landmarks = fallback;
             }
         }
 
@@ -391,7 +500,7 @@ public class NativePoseInputSource : MonoBehaviour
 
     private void ConsumePendingResult()
     {
-        List<PoseLandmarkSample> landmarks;
+        IReadOnlyList<PoseLandmarkSample> landmarks;
         float timestampSeconds;
 
         lock (_resultLock)

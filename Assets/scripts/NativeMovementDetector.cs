@@ -398,23 +398,36 @@ public class NativeMovementDetector
         }
     }
 
-    private void HandleStanding(float offsetRatio, float velocityRatio, float now)
+    // Común a HandleStanding/HandleCrouching -- mismo umbral de salto
+    // (JumpTriggerOffsetRatio/JumpMinUpwardVelocity/JumpCooldownSeconds)
+    // entra en juego sin importar si el jugador venía parado o agachado
+    // (ver comentario grande en HandleCrouching sobre por qué esto tiene
+    // que evaluarse desde los dos estados -- antes estaba duplicado letra
+    // por letra en ambos métodos). Limpia los dos candidatos (crouch/stand)
+    // sin importar de cuál de los dos estados se vino: el que no aplica ya
+    // está en null a esta altura, así que no cambia nada de verdad.
+    private bool TryEnterJumping(float offsetRatio, float velocityRatio, float now)
     {
-        _standCandidateSince = null;
-
         bool inCooldown = (now - _lastJumpTime) < NativeDetectionConfig.JumpCooldownSeconds;
         bool isJumpCandidate =
             offsetRatio >= NativeDetectionConfig.JumpTriggerOffsetRatio
             && velocityRatio >= NativeDetectionConfig.JumpMinUpwardVelocity;
 
-        if (!inCooldown && isJumpCandidate)
-        {
-            State = MovementState.Jumping;
-            _jumpEnteredTime = now;
-            _crouchCandidateSince = null;
-            OnJump?.Invoke();
-            return;
-        }
+        if (inCooldown || !isJumpCandidate) return false;
+
+        State = MovementState.Jumping;
+        _jumpEnteredTime = now;
+        _crouchCandidateSince = null;
+        _standCandidateSince = null;
+        OnJump?.Invoke();
+        return true;
+    }
+
+    private void HandleStanding(float offsetRatio, float velocityRatio, float now)
+    {
+        _standCandidateSince = null;
+
+        if (TryEnterJumping(offsetRatio, velocityRatio, now)) return;
 
         // Candidato a agache: requiere persistencia (sostenerlo un rato)
         // para no confundirse con un salto en preparación (contramovimiento
@@ -463,21 +476,9 @@ public class NativeMovementDetector
         // nada, porque el estado seguía siendo Crouching. Para cuando por
         // fin se declaraba Standing, la velocidad real ya venía bajando y
         // el salto se perdía. Mismos umbrales que un salto desde Standing
-        // (JumpTriggerOffsetRatio/JumpMinUpwardVelocity/JumpCooldownSeconds)
-        // -- no hace falta relajar nada para que esto dispare correcto.
-        bool inCooldown = (now - _lastJumpTime) < NativeDetectionConfig.JumpCooldownSeconds;
-        bool isJumpCandidate =
-            offsetRatio >= NativeDetectionConfig.JumpTriggerOffsetRatio
-            && velocityRatio >= NativeDetectionConfig.JumpMinUpwardVelocity;
-
-        if (!inCooldown && isJumpCandidate)
-        {
-            State = MovementState.Jumping;
-            _jumpEnteredTime = now;
-            _standCandidateSince = null;
-            OnJump?.Invoke();
-            return;
-        }
+        // -- no hace falta relajar nada para que esto dispare correcto
+        // (ver TryEnterJumping, compartido con HandleStanding).
+        if (TryEnterJumping(offsetRatio, velocityRatio, now)) return;
 
         if (offsetRatio >= -NativeDetectionConfig.CrouchReleaseOffsetRatio)
         {

@@ -62,15 +62,15 @@ public class RunnerController : MonoBehaviour
     [SerializeField] private string crouchClipName = "Crouch_Fwd_Loop";
     [SerializeField] private float animationCrossFade = 0.1f;
 
-    [Header("Reacción al chocar la Barrera")]
-    [Tooltip("Nombre EXACTO del estado en 'Player Animator.controller' para la reacción de choque " +
-             "de cabeza (clip del pack: 'Hit_Head', dentro de UAL1_Standard.fbx). Solo se dispara con " +
-             "la Barrera (obstáculo alto, se choca de cabeza) -- el Log se choca con el cuerpo, no " +
-             "aplica. Vacío = no reproduce nada (mismo comportamiento que antes de este cambio).")]
-    [SerializeField] private string hitHeadClipName = "Hit_Head";
-    [Tooltip("Cuánto se sostiene la pose de choque antes de volver a la animación de correr. No sale " +
-             "de ningún otro timer del juego -- ajustalo mirando el clip en Play hasta que se vea bien.")]
-    [SerializeField] private float hitHeadHoldSeconds = 0.5f;
+    [Header("Rotación del modelo (fix visual)")]
+    [Tooltip("Rotación Y del modelo visual durante la pose de arranque (agachado/idle, la que " +
+             "se ve mientras dura la pantalla de carga) -- se ajusta a mano mirando cómo se ve " +
+             "en Play, es independiente de la rotación que necesita la animación de correr.")]
+    [SerializeField] private float startPoseModelYRotation = 0f;
+    [Tooltip("Rotación Y del modelo visual una vez que arranca a correr de verdad. Distinta de " +
+             "la de arriba a propósito: el retargeting Humanoid hace que cada animación pueda " +
+             "necesitar su propio ajuste fino para verse derecha.")]
+    [SerializeField] private float runningModelYRotation = -181.767f;
 
     [Header("Muerte")]
     [Tooltip("Cuánto dura, en segundos, el recorrido de la curva de abajo -- lo ideal es que " +
@@ -104,11 +104,6 @@ public class RunnerController : MonoBehaviour
     // corrutina de "pararse" se lleve puesto el salto ya decidido.
     private float crouchEnteredTime = -999f;
     private Coroutine pendingJumpRoutine;
-    // Corrutina de la reacción de choque de cabeza (ver PlayHitHeadReaction).
-    // Separada de actionRoutine a propósito: es puramente cosmética (no
-    // toca State ni el collider), así que no debería competir por la misma
-    // corrutina que sí gobierna el salto/agache real.
-    private Coroutine hitHeadRoutine;
 
     // Hashes de los nombres de clip, calculados UNA sola vez en Awake en
     // vez de dejar que Animator.CrossFadeInFixedTime(string, ...) rehaga
@@ -139,9 +134,9 @@ public class RunnerController : MonoBehaviour
         rb.useGravity = false;
 
         // TUNNELING -- causa real de "choques que no entran" (diagnosticado
-        // 14/8 con el reporte de que la animación de Hit_Head aparecía
-        // segundos tarde: no llegaba tarde, se PERDÍA el choque de esa
-        // barrera y disparaba recién con una posterior).
+        // 14/8 con el reporte de que el choque parecía llegar segundos
+        // tarde: no llegaba tarde, se PERDÍA el choque de esa barrera y
+        // recién se registraba con una posterior).
         //
         // Los números: el trigger de la Barrera mide 0.306 unidades de
         // profundidad en Z (BoxCollider size z=1, pero el root del prefab
@@ -220,6 +215,15 @@ public class RunnerController : MonoBehaviour
         // Death01, arruinando la pose.
         if (GameManager.Instance != null && GameManager.Instance.IsGameOver) return;
 
+        // Mismo criterio durante la pantalla de carga / paneo de cámara de
+        // arranque (ver GameIntroSequence): si el jugador salta de verdad
+        // frente a la cámara ANTES de que termine la intro, State pasaba a
+        // Jumping y JumpRoutine empezaba a mover la Y del personaje --
+        // peleando contra la pose/cámara que la intro está tratando de
+        // asentar, y dejando al personaje "trabado" en una pose rara una
+        // vez que el juego arranca de verdad. Bug real, reportado el 17/8.
+        if (GameManager.Instance != null && !GameManager.Instance.HasGameplayStarted) return;
+
         // Solo ignoramos el salto si YA está en el aire (para no reiniciar
         // el arco a mitad de camino). Antes también lo ignorábamos estando
         // agachado, obligando a pasar por un instante "de pie" en el medio
@@ -276,6 +280,9 @@ public class RunnerController : MonoBehaviour
     private void HandleCrouch()
     {
         if (GameManager.Instance != null && GameManager.Instance.IsGameOver) return;
+        // Ver comentario grande en HandleJump -- mismo criterio durante la
+        // pantalla de carga / paneo de cámara de arranque.
+        if (GameManager.Instance != null && !GameManager.Instance.HasGameplayStarted) return;
 
         if (State == PlayerState.Jumping)
         {
@@ -299,6 +306,9 @@ public class RunnerController : MonoBehaviour
     private void HandleStand()
     {
         if (GameManager.Instance != null && GameManager.Instance.IsGameOver) return;
+        // Ver comentario grande en HandleJump -- mismo criterio durante la
+        // pantalla de carga / paneo de cámara de arranque.
+        if (GameManager.Instance != null && !GameManager.Instance.HasGameplayStarted) return;
 
         // Si en la vida real el jugador ya se paró de nuevo antes de que
         // termine el salto, cancelamos el agache que habíamos guardado —
@@ -394,7 +404,6 @@ public class RunnerController : MonoBehaviour
     {
         if (actionRoutine != null) { StopCoroutine(actionRoutine); actionRoutine = null; }
         if (pendingJumpRoutine != null) { StopCoroutine(pendingJumpRoutine); pendingJumpRoutine = null; }
-        if (hitHeadRoutine != null) { StopCoroutine(hitHeadRoutine); hitHeadRoutine = null; }
 
         capsule.height = originalColliderHeight;
         Vector3 center = capsule.center;
@@ -451,34 +460,34 @@ public class RunnerController : MonoBehaviour
         PlayAnimation(runClipHash);
     }
 
-    // Reacción cosmética al chocar la Barrera de cabeza (ver OnTriggerEnter).
-    // A propósito NO toca State/actionRoutine/el collider -- el choque ya se
-    // procesó (vida restada, obstáculo devuelto al pool) en OnTriggerEnter;
-    // esto es solo la animación. Si el jugador salta o se agacha de verdad
-    // mientras dura, HandleJump/HandleCrouch pisan esto solos (mismo
-    // CrossFade que cualquier otra transición), no hace falta cancelarlo acá.
-    private void PlayHitHeadReaction()
+    // Público para GameIntroSequence: aplica la rotación Y ajustada a mano
+    // para la pose de arranque (agachado/idle, ver startPoseModelYRotation) --
+    // llamar junto con PlayCustomAnimation(introClipName).
+    public void ApplyStartPoseRotation()
     {
-        if (string.IsNullOrEmpty(hitHeadClipName)) return;
-
-        PlayCustomAnimation(hitHeadClipName);
-
-        if (hitHeadRoutine != null) StopCoroutine(hitHeadRoutine);
-        hitHeadRoutine = StartCoroutine(ResumeAfterHitHead());
+        SetModelYRotation(startPoseModelYRotation);
     }
 
-    private IEnumerator ResumeAfterHitHead()
+    // Público para GameIntroSequence: aplica la rotación Y ajustada a mano
+    // para cuando arranca a correr de verdad (ver runningModelYRotation) --
+    // llamar junto con ResumeRunAnimation().
+    public void ApplyRunningRotation()
     {
-        yield return new WaitForSeconds(hitHeadHoldSeconds);
-        hitHeadRoutine = null;
+        SetModelYRotation(runningModelYRotation);
+    }
 
-        // Solo si seguimos corriendo normal -- si mientras tanto saltaste o
-        // te agachaste de verdad, esa animación ya está puesta y no hay que
-        // pisarla con la de correr.
-        if (State == PlayerState.Running)
-        {
-            PlayAnimation(runClipHash);
-        }
+    // Rota el modelo visual (el mismo GameObject que trae el Animator --
+    // PlayerCharacterSpawner/MenuMouseJumper lo swapean entero como una
+    // unidad, ver CharacterModelSwapper) sobre su eje Y local, dejando
+    // X/Z tal como estén. Fix puntual para compensar que el retargeting
+    // Humanoid necesita un ajuste de orientación distinto según la
+    // animación que esté sonando en ese momento.
+    private void SetModelYRotation(float yDegrees)
+    {
+        if (animator == null) return;
+        Vector3 euler = animator.transform.localEulerAngles;
+        euler.y = yDegrees;
+        animator.transform.localEulerAngles = euler;
     }
 
     // Achica/agranda SOLO el CapsuleCollider (height/center), nunca el
@@ -544,23 +553,14 @@ public class RunnerController : MonoBehaviour
         if (!dodgedByJumpGrace)
         {
             GameManager.Instance?.RegisterObstacleHit();
-
-            // Reacción de cabeza SOLO con la Barrera: es el único obstáculo
-            // que se choca de cabeza (alto, se agacha para pasar) -- el Log
-            // se choca con el cuerpo/piernas (bajo, se salta), no tiene
-            // sentido la misma reacción ahí.
-            if (!isLowObstacle)
-            {
-                PlayHitHeadReaction();
-            }
         }
 
         // El obstáculo NO se toca acá a propósito: se queda en su lugar y el
         // jugador lo atraviesa. Antes desaparecía al chocarlo (era la señal
         // visual más simple de "che, pasó algo" cuando todavía no había UI de
-        // vidas), pero ya existe el HUD de vidas (ver UIManager) y la reacción
-        // de Hit_Head para comunicar el choque, así que hacerlo desaparecer
-        // solo rompía la continuidad del escenario.
+        // vidas), pero ya existe el HUD de vidas (ver UIManager) para
+        // comunicar el choque, así que hacerlo desaparecer solo rompía la
+        // continuidad del escenario.
         //
         // Que se quede NO lo deja colgado ni pierde el pooling: ObstacleSpawner
         // .CleanupBehindPlayer() lo devuelve al pool igual apenas queda

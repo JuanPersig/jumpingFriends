@@ -4,7 +4,6 @@
 // Python (jumping-friends-poc/pose_detector.py).
 public static class PoseLandmarkIndex
 {
-    public const int Nose = 0;
     public const int LeftShoulder = 11;
     public const int RightShoulder = 12;
     public const int LeftHip = 23;

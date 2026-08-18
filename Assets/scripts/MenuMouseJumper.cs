@@ -110,63 +110,29 @@ public class MenuMouseJumper : MonoBehaviour
         // estado puesto la vez anterior. Ver comentario del campo arriba.
         if (!baseTransformCaptured)
         {
-            if (parent.childCount > 0)
-            {
-                Transform placeholder = parent.GetChild(0);
-                baseLocalPos = placeholder.localPosition;
-                baseLocalRot = placeholder.localRotation;
-                baseLocalScale = placeholder.localScale;
-            }
-            else
-            {
-                baseLocalPos = Vector3.zero;
-                baseLocalRot = Quaternion.identity;
-                baseLocalScale = Vector3.one;
-            }
+            CharacterModelSwapper.LocalTransform captured = CharacterModelSwapper.LocalTransform.FromFirstChildOrIdentity(parent);
+            baseLocalPos = captured.Position;
+            baseLocalRot = captured.Rotation;
+            baseLocalScale = captured.Scale;
             baseTransformCaptured = true;
         }
 
-        for (int i = parent.childCount - 1; i >= 0; i--)
+        // Swap de modelo + Animator compartido con PlayerCharacterSpawner
+        // (mismos gotchas de FBX) -- ver CharacterModelSwapper.
+        animator = CharacterModelSwapper.Swap(
+            parent,
+            selected,
+            new CharacterModelSwapper.LocalTransform(baseLocalPos, baseLocalRot, baseLocalScale),
+            sharedController,
+            "MenuMouseJumper");
+
+        if (animator != null && jumpClipHash != 0)
         {
-            Destroy(parent.GetChild(i).gameObject);
-        }
-
-        GameObject newModel = Instantiate(selected.prefab, parent);
-        newModel.transform.localPosition = baseLocalPos;
-        // Corrección propia de ESTE personaje (ver CharacterOption.modelRotationOffset)
-        // aplicada sobre la base NEUTRAL fija -- así un FBX con el eje horneado
-        // distinto no queda "acostado" aunque anime bien, y cambiar de
-        // personaje varias veces seguidas no acumula rotación de más.
-        newModel.transform.localRotation = baseLocalRot * Quaternion.Euler(selected.modelRotationOffset);
-        newModel.transform.localScale = baseLocalScale;
-
-        animator = newModel.GetComponentInChildren<Animator>();
-        if (animator == null)
-        {
-            Debug.LogWarning($"[MenuMouseJumper] '{selected.prefab.name}' no tiene ningún " +
-                              "Animator en su jerarquía -- el Jumper no va a animar.");
-        }
-        else
-        {
-            // Un FBX recién importado trae su Animator con 'Apply Root
-            // Motion' TILDADO por defecto -- acá el Jumper también mueve su
-            // Y a mano (Jump()), así que cualquier movimiento horneado en
-            // la raíz del clip se sumaría solo y lo haría girar/derivar.
-            animator.applyRootMotion = false;
-
-            // Un FBX recién importado trae su propio Animator SIN Controller
-            // asignado -- sin esto, el modelo queda congelado en su pose
-            // original (nada lo anima) en vez de pararse en Jump_Loop.
-            if (sharedController != null) animator.runtimeAnimatorController = sharedController;
-
-            if (jumpClipHash != 0)
-            {
-                // Re-aplicamos el estado de salto al toque: si este refresh
-                // pasa a mitad de partida (cambiaste de personaje en el
-                // menú), el Animator nuevo arranca en su pose por defecto
-                // hasta que se lo pidamos explícito acá.
-                animator.CrossFadeInFixedTime(jumpClipHash, 0.1f);
-            }
+            // Re-aplicamos el estado de salto al toque: si este refresh pasa
+            // a mitad de partida (cambiaste de personaje en el menú), el
+            // Animator nuevo arranca en su pose por defecto hasta que se lo
+            // pidamos explícito acá.
+            animator.CrossFadeInFixedTime(jumpClipHash, 0.1f);
         }
     }
 

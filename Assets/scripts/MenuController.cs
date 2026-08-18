@@ -39,6 +39,11 @@ public class MenuController : MonoBehaviour
     [Header("Juego")]
     [Tooltip("Nombre EXACTO de la escena de juego (tal cual aparece en Build Settings).")]
     [SerializeField] private string gameplaySceneName = "SampleScene";
+    [Tooltip("Mensaje que avisa 'configurá tu cámara antes de jugar' si el jugador aprieta " +
+             "Jugar sin haber calibrado en Configuración todavía. Recomendado: ponelo como " +
+             "HIJO de mainPanel -- así se oculta solo apenas se navega a cualquier otro panel, " +
+             "sin necesitar lógica extra. Opcional: dejalo vacío para no bloquear nada.")]
+    [SerializeField] private GameObject cameraNotConfiguredWarning;
 
     private void Start()
     {
@@ -74,6 +79,9 @@ public class MenuController : MonoBehaviour
         if (settingsPanel != null) settingsPanel.SetActive(false);
         if (mainPanel != null) mainPanel.SetActive(true);
         if (cameraMover != null) cameraMover.ShowMainMenuView();
+        // Se apaga cada vez que se vuelve al panel principal, para que no
+        // quede colgado de una vez anterior que apretaste Jugar sin cámara.
+        if (cameraNotConfiguredWarning != null) cameraNotConfiguredWarning.SetActive(false);
     }
 
     public void OnNextCharacter()
@@ -92,6 +100,19 @@ public class MenuController : MonoBehaviour
 
     public void OnPlayPressed()
     {
+        // Bloqueo: no dejar arrancar la partida si el jugador nunca pasó
+        // por Configuración a calibrar la cámara (o si calibró y falló --
+        // ver NativePoseInputSource.IsCalibrated/HasCameraError). Sin la
+        // cámara calibrada, el juego arranca pero nunca responde al salto/
+        // agache -- mejor avisar acá, antes de cambiar de escena, que
+        // dejarlo entrar a un juego que no va a poder jugar.
+        bool cameraReady = NativePoseInputSource.Instance != null && NativePoseInputSource.Instance.IsCalibrated;
+        if (!cameraReady)
+        {
+            if (cameraNotConfiguredWarning != null) cameraNotConfiguredWarning.SetActive(true);
+            return;
+        }
+
         SceneManager.LoadScene(gameplaySceneName);
     }
 
