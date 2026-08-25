@@ -137,6 +137,38 @@ public class ObstacleSpawner : MonoBehaviour
     // Copia "limpia" de obstaclePrefabs sin slots vacíos (o sin prefab asignado). Ver por qué en Start().
     private List<ObstacleEntry> validObstaclePrefabs;
 
+    // AZAR SEMBRADO (Fase 3, 25/8). Antes esto usaba UnityEngine.Random, que
+    // es un generador GLOBAL compartido por toda la escena y arranca en un
+    // estado distinto en cada máquina -- o sea, cada cliente generaba su
+    // propia secuencia de obstáculos y jugaban partidas distintas.
+    //
+    // Ahora es un System.Random PROPIO de este spawner, sembrado con la
+    // semilla que reparte NetworkRoundState. Instancia propia y NO
+    // Random.InitState() a propósito: el generador global lo usa cualquier
+    // otra cosa de la escena (efectos, decoración), así que sembrarlo no
+    // garantiza nada -- cualquier consumidor extra desalinearía la secuencia.
+    private System.Random rng;
+
+    // La semilla puede tardar en llegar del servidor, así que el generador se
+    // crea en el primer uso real (el primer obstáculo se spawnea recién
+    // después de la pantalla de carga, con la semilla ya replicada).
+    private void EnsureRng()
+    {
+        if (rng != null) return;
+
+        NetworkRoundState round = NetworkRoundState.Instance;
+        if (round == null)
+        {
+            Debug.LogError("[ObstacleSpawner] No hay ningún NetworkRoundState en la escena -- " +
+                            "usando una semilla al azar. En multijugador cada cliente va a ver " +
+                            "obstáculos distintos.");
+            rng = new System.Random();
+            return;
+        }
+
+        rng = new System.Random(round.ObstacleSeed);
+    }
+
     private void Start()
     {
         if (lanePlayers == null || lanePlayers.Length == 0 || lanePlayers[0] == null)
@@ -233,6 +265,8 @@ public class ObstacleSpawner : MonoBehaviour
     //   general, sin volverse un patrón predecible tipo ABAB fijo.
     private ObstacleEntry PickNextEntry()
     {
+        EnsureRng();
+
         if (validObstaclePrefabs.Count <= 1)
         {
             ObstacleEntry only = validObstaclePrefabs[0];
@@ -243,7 +277,7 @@ public class ObstacleSpawner : MonoBehaviour
 
         float switchTypeChance = Mathf.Lerp(switchTypeChanceEarly, switchTypeChanceLate, currentProgress01);
         bool mustSwitch = lastPickedEntry != null && consecutiveSameCount >= MaxConsecutiveSameType;
-        bool wantsSwitch = lastPickedEntry == null || mustSwitch || Random.value < switchTypeChance;
+        bool wantsSwitch = lastPickedEntry == null || mustSwitch || rng.NextDouble() < switchTypeChance;
 
         ObstacleEntry picked;
         if (wantsSwitch)
@@ -252,7 +286,7 @@ public class ObstacleSpawner : MonoBehaviour
             // la primera vuelta, y evita alocar una lista nueva cada vez.
             do
             {
-                picked = validObstaclePrefabs[Random.Range(0, validObstaclePrefabs.Count)];
+                picked = validObstaclePrefabs[rng.Next(0, validObstaclePrefabs.Count)];
             } while (picked == lastPickedEntry);
         }
         else

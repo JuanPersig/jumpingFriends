@@ -76,3 +76,8 @@ Cliente/
 *.rar
 *.zip
 *.7z
+
+# Stubs que autogenera com.unity.test-framework.performance en cada build/import
+# (contenido vacio/por defecto, se recrean solos)
+Assets/Resources/PerformanceTestRunInfo.json*
+Assets/Resources/PerformanceTestRunSettings.json*

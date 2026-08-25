@@ -1,9 +1,13 @@
 using System.Collections;
 using UnityEngine;
 
-// Pantalla en negro simple que tapa el arranque de Gameplay.unity durante
-// un tiempo FIJO (minShowSeconds) -- le da margen a que se termine de
-// asentar todo (chunks, personaje) antes de revelar nada.
+// Pantalla en negro que tapa el arranque de Gameplay.unity -- le da margen a
+// que se termine de asentar todo (chunks, personaje) antes de revelar nada.
+//
+// CUÁNTO dura depende de si hay red (ver WaitForRevealMoment): con una sala
+// activa se levanta justo a tiempo para que la intro termine en el instante
+// que acordaron todos los clientes; sin red, un tiempo fijo (minShowSeconds),
+// que es el comportamiento de siempre.
 //
 // A PROPÓSITO ya no espera a que MediaPipe/la webcam confirmen estar
 // listos: se probó esa versión (gate sobre NativePoseInputSource.IsReady /
@@ -25,6 +29,50 @@ public class StartupLoadingScreen : MonoBehaviour
     [SerializeField] private float fadeOutSeconds = 0.5f;
 
     private CanvasGroup canvasGroup;
+
+    // Cuándo levantar el negro (Fase 3, 25/8). Antes era siempre
+    // minShowSeconds, un reloj puramente LOCAL -- con dos clientes, cada uno
+    // arrancaba su ronda en un instante distinto.
+    //
+    // Ahora, si hay estado de ronda en red, se revela justo a tiempo para que
+    // la intro de cámara TERMINE en el instante acordado por todos
+    // (NetworkRoundState.GameplayStartTime). Como la intro dura lo mismo en
+    // todas las máquinas, los tres momentos -- revelar, terminar la intro y
+    // empezar a correr -- quedan alineados sin mandar nada más por la red.
+    //
+    // Se conserva minShowSeconds como respaldo para cuando NO hay red
+    // (Gameplay.unity abierta suelta desde el Editor), que es exactamente el
+    // comportamiento de siempre.
+    private IEnumerator WaitForRevealMoment()
+    {
+        NetworkRoundState round = NetworkRoundState.Instance;
+        float introDuration = introSequence != null ? introSequence.IntroDuration : 0f;
+
+        if (round == null)
+        {
+            yield return new WaitForSeconds(minShowSeconds);
+            yield break;
+        }
+
+        // Tope de seguridad: si el estado de ronda nunca se resuelve, no nos
+        // quedamos en negro para siempre (guardarraíl 8 del proyecto). El
+        // tope arranca generoso porque la espera legítima ya incluye el
+        // margen de carga que puso el servidor.
+        float maxWait = minShowSeconds + 20f;
+        float waited = 0f;
+
+        while (round.SecondsUntilStart > introDuration && waited < maxWait)
+        {
+            waited += Time.deltaTime;
+            yield return null;
+        }
+
+        if (waited >= maxWait)
+        {
+            Debug.LogWarning("[StartupLoadingScreen] Se venció la espera del arranque de ronda -- " +
+                              "revelando igual. La partida puede quedar desfasada de la de los demás.");
+        }
+    }
 
     private void Awake()
     {
@@ -51,7 +99,7 @@ public class StartupLoadingScreen : MonoBehaviour
         // válida acá tal cual llegó; recalibrar de nuevo en Gameplay sería
         // lo mismo que no haber calibrado nada en Configuración.
 
-        yield return new WaitForSeconds(minShowSeconds);
+        yield return WaitForRevealMoment();
 
         introSequence?.BeginIntro();
         // Un frame de margen para que BeginIntro() arranque su propia

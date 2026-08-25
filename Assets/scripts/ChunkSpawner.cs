@@ -146,6 +146,15 @@ public class ChunkSpawner : MonoBehaviour
     // a esa zona.
     private IEnumerator SpawnInitialChunks()
     {
+        // La semilla puede tardar unos frames en llegar del servidor (las
+        // NetworkVariable de NetworkRoundState viajan justo después del
+        // spawn). Esperarla ACÁ es gratis: todo esto pasa tapado por la
+        // pantalla negra de StartupLoadingScreen, no se ve ninguna demora.
+        // Sin esta espera, un cliente que arranca antes de recibir la
+        // semilla arma TODO el mapa con la equivocada y ve un escenario
+        // distinto al de los demás durante toda la ronda.
+        yield return WaitForSeed();
+
         // Un chunk extra ANTES del arranque (Z negativo) -- solo para que
         // la intro de cámara (GameIntroSequence, que muestra al jugador de
         // espaldas) no se vea con el vacío atrás. Se despareja solo apenas
@@ -167,6 +176,48 @@ public class ChunkSpawner : MonoBehaviour
         // Recién ACÁ termina de estabilizarse nextChunkZ -- antes de esto,
         // Update() se queda quieto (ver el guard de abajo).
         initialChunksReady = true;
+    }
+
+    // AZAR SEMBRADO (Fase 3, 25/8) -- mismo motivo y mismo criterio que en
+    // ObstacleSpawner: generador PROPIO, no el UnityEngine.Random global, así
+    // todos los clientes arman exactamente el mismo escenario. El XOR es para
+    // que este flujo de azar no sea idéntico al de los obstáculos aunque
+    // ambos salgan de la misma semilla de ronda.
+    private System.Random rng;
+
+    // Tope de espera para no colgar el arranque si el estado de red nunca
+    // llega (guardarraíl 8 del proyecto: jamás un "esperar hasta que" sin
+    // salida). Si se vence, seguimos con lo que haya -- el escenario puede
+    // no coincidir, pero el juego arranca.
+    private const float SeedWaitTimeoutSeconds = 5f;
+
+    private IEnumerator WaitForSeed()
+    {
+        NetworkRoundState round = NetworkRoundState.Instance;
+
+        float waited = 0f;
+        while (round != null && !round.IsResolved && waited < SeedWaitTimeoutSeconds)
+        {
+            waited += Time.deltaTime;
+            yield return null;
+        }
+
+        if (round == null)
+        {
+            Debug.LogError("[ChunkSpawner] No hay ningún NetworkRoundState en la escena -- " +
+                            "usando una semilla al azar. En multijugador cada cliente va a ver " +
+                            "un escenario distinto.");
+            rng = new System.Random();
+            yield break;
+        }
+
+        if (!round.IsResolved)
+        {
+            Debug.LogWarning($"[ChunkSpawner] El estado de ronda no llegó en {SeedWaitTimeoutSeconds}s -- " +
+                              "armando el mapa igual. El escenario puede no coincidir con el de los demás.");
+        }
+
+        rng = new System.Random(round.ObstacleSeed ^ 0x5F3A7C1);
     }
 
     private void Update()
@@ -202,7 +253,13 @@ public class ChunkSpawner : MonoBehaviour
     {
         if (chunkPrefabs == null || chunkPrefabs.Length == 0) return;
 
-        GameObject prefab = chunkPrefabs[Random.Range(0, chunkPrefabs.Length)];
+        // rng puede seguir en null si SpawnChunkAt se llamara antes de que
+        // WaitForSeed haya terminado -- hoy no pasa (el único camino de
+        // entrada es SpawnInitialChunks, que espera primero), pero cubrirse
+        // es gratis y evita un NullReference silencioso si algo cambia.
+        if (rng == null) rng = new System.Random();
+
+        GameObject prefab = chunkPrefabs[rng.Next(0, chunkPrefabs.Length)];
         Vector3 spawnPos = new Vector3(pathX, 0f, z);
         GameObject chunk = Instantiate(prefab, spawnPos, Quaternion.identity);
         activeChunks.Add(chunk);

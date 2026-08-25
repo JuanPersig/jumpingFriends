@@ -25,6 +25,12 @@ public class GameIntroSequence : MonoBehaviour
     [SerializeField] private Transform introCameraEnd;
     [SerializeField] private float introDuration = 2.5f;
 
+    // Público para StartupLoadingScreen: necesita saber cuánto dura la intro
+    // para levantar la pantalla negra JUSTO a tiempo, de modo que la intro
+    // termine (y el juego arranque) en el instante de red acordado por
+    // NetworkRoundState -- el mismo para todos los clientes.
+    public float IntroDuration => introDuration;
+
     [Header("Animación de arranque")]
     [Tooltip("El RunnerController del jugador -- necesario porque, si cambiaste de " +
              "personaje en el menú, el Animator real es uno nuevo (swapeado por " +

@@ -105,6 +105,10 @@ public class RunnerController : MonoBehaviour
     private float crouchEnteredTime = -999f;
     private Coroutine pendingJumpRoutine;
 
+    // Ver Awake/Update: la Z se calcula como startZ + distancia recorrida,
+    // en vez de irse sumando frame a frame.
+    private float startZ;
+
     // Hashes de los nombres de clip, calculados UNA sola vez en Awake en
     // vez de dejar que Animator.CrossFadeInFixedTime(string, ...) rehaga
     // internamente Animator.StringToHash() cada vez que cambiamos de
@@ -120,6 +124,12 @@ public class RunnerController : MonoBehaviour
         originalColliderHeight = capsule.height;
         originalColliderCenterY = capsule.center.y;
         groundLocalY = transform.position.y;
+
+        // Z de arranque, capturada UNA vez. A partir de acá la posición en Z
+        // es siempre startZ + distancia recorrida (ver Update) -- absoluta,
+        // no acumulada. RoundLaneSetup solo toca la X, así que este valor
+        // sigue siendo válido después de que reacomode los carriles.
+        startZ = transform.position.z;
 
         runClipHash = string.IsNullOrEmpty(runClipName) ? 0 : Animator.StringToHash(runClipName);
         jumpClipHash = string.IsNullOrEmpty(jumpClipName) ? 0 : Animator.StringToHash(jumpClipName);
@@ -218,7 +228,22 @@ public class RunnerController : MonoBehaviour
         if (GameManager.Instance != null && !GameManager.Instance.HasGameplayStarted) return;
         if (DifficultyManager.Instance == null) return;
 
-        transform.position += Vector3.forward * DifficultyManager.Instance.CurrentSpeed * Time.deltaTime;
+        // Posición ABSOLUTA, no acumulada (Fase 3, 25/8): antes esto era
+        // `position += forward * speed * deltaTime`, que va sumando el error
+        // de redondeo de cada frame. Dos clientes con distinto framerate
+        // acumulan errores distintos y se separan solos, sin que nada avise.
+        //
+        // Ahora la distancia la calcula DifficultyManager en forma cerrada a
+        // partir del tiempo de ronda compartido, así que todos los clientes
+        // llegan al mismo número -- y si a uno se le traba un frame, al
+        // siguiente vuelve solo a donde corresponde en vez de quedar
+        // permanentemente atrasado. Ver el comentario grande de ese script.
+        //
+        // Solo se toca la Z: la Y la manejan el salto y la muerte, la X la
+        // fija RoundLaneSetup según el carril.
+        Vector3 pos = transform.position;
+        pos.z = startZ + DifficultyManager.Instance.DistanceTravelled;
+        transform.position = pos;
     }
 
     private void HandleJump()
