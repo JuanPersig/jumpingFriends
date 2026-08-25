@@ -64,3 +64,15 @@ Vendor/*.tgz
 
 # Capturas del Profiler (.data pueden pesar cientos de MB, son descartables/locales)
 ProfilerCaptures/
+
+# Builds locales para probar multijugador con dos instancias (Host/ y Cliente/
+# son copias del mismo build, ~220 MB cada una) — no matchean [Bb]uild/ ni
+# [Bb]uilds/ por el nombre. Se regeneran desde el Editor, no se versionan.
+Host/
+Cliente/
+
+# Comprimidos del proyecto (backups a mano, decenas de MB) — el backup real
+# es este mismo repo, no un .rar al lado del proyecto.
+*.rar
+*.zip
+*.7z

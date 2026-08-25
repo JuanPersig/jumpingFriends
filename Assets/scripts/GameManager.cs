@@ -7,12 +7,13 @@ public class GameManager : Singleton<GameManager>
     [SerializeField] private int startingLives = 3;
 
     [Header("Multijugador")]
-    [Tooltip("Cantidad de jugadores de ESTA ronda (1 a 4). Hoy se configura acá a mano para " +
-             "poder armar/probar mapas de distinto tamaño en el Editor sin depender de la red. " +
-             "Cuando exista la sala de espera de verdad (Netcode/Lobby), esto va a quedar fijado " +
-             "por la cantidad real de jugadores conectados ANTES de cargar Gameplay.unity -- ver " +
-             "jumping-friends-multiplayer-plan: el tamaño de la partida se decide en el lobby y " +
-             "no cambia más una vez arrancada, así que leerlo una sola vez acá en Awake alcanza.")]
+    [Tooltip("Cantidad de jugadores de ESTA ronda (1 a 4). Manual por ahora (se sacó el " +
+             "selector de botones de Configuración y el RoundSettings que lo respaldaba, " +
+             "25/8) -- hasta que la Fase 3 lea la cantidad real de jugadores conectados por " +
+             "red, este es un valor fijo de Inspector. Si tocás esto a mano para probar " +
+             "localmente varios carriles, mantenelo IGUAL al de RoundLaneSetup (mismo campo, " +
+             "duplicado por ahora porque ese script necesita leerlo en su propio Awake() -- ver " +
+             "el comentario ahí).")]
     [SerializeField] private int roundPlayerCount = 1;
     public int RoundPlayerCount => roundPlayerCount;
 

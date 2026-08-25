@@ -38,6 +38,14 @@ public class CharacterSelection : Singleton<CharacterSelection>
     public CharacterOption Selected =>
         Count > 0 ? characters[Mathf.Clamp(selectedIndex, 0, Count - 1)] : null;
 
+    // Personaje en un índice arbitrario (no necesariamente el elegido
+    // localmente) -- lo usa LobbyJumperSpawner para mostrar el personaje
+    // que OTRO jugador de la sala eligió, no el propio. Clampeado igual
+    // que Selected, por si el índice sincronizado por red no coincide con
+    // la cantidad de personajes de este build (ej. builds desactualizados).
+    public CharacterOption Get(int index) =>
+        Count > 0 ? characters[Mathf.Clamp(index, 0, Count - 1)] : null;
+
     protected override void Awake()
     {
         base.Awake();

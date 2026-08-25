@@ -171,6 +171,21 @@ public class RunnerController : MonoBehaviour
 
     private void Start()
     {
+        // Rotación de corrida por defecto (ver runningModelYRotation): antes
+        // solo la aplicaba GameIntroSequence, que maneja UN solo
+        // RunnerController puntual -- cualquier carril extra (los que arma
+        // RoundLaneSetup para pruebas locales de varios jugadores) nunca
+        // pasaba por ahí y se quedaba con la rotación cruda del modelo, sin
+        // corregir. Poniéndolo acá como default, CUALQUIER RunnerController
+        // arranca bien orientado sin depender de GameIntroSequence. Para el
+        // jugador principal no cambia nada: GameIntroSequence lo sigue
+        // pisando con la pose de arranque (ApplyStartPoseRotation) y lo
+        // devuelve a este mismo valor al terminar la intro
+        // (ApplyRunningRotation) -- sin conflicto, y todo esto pasa tapado
+        // por la pantalla de carga negra (StartupLoadingScreen), no se nota
+        // ningún salto.
+        ApplyRunningRotation();
+
         // Se suscribe en Start(), no en OnEnable(): Unity garantiza que
         // TODOS los Awake() de la escena (incluido el de PlayerInputProvider,
         // que asigna Instance) corren antes que cualquier Start(). Con

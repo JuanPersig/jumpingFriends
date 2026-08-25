@@ -1,0 +1,145 @@
+using UnityEngine;
+
+// Activa, en Gameplay.unity, la cantidad exacta de "carriles" (jugadores)
+// que le corresponde a esta ronda -- sin crear ni destruir ningún
+// GameObject en el proceso. Los hasta 4 GameObjects "player" posibles YA
+// están armados de antemano en la escena (ver playerSlots); este script
+// solo prende los primeros N, los reposiciona en el X que le toca a cada
+// uno según el mapa de ese tamaño, y apaga el resto -- así probar con
+// distinta cantidad de jugadores es cambiar el número acá o en
+// GameManager, no editar la Hierarchy a mano en cada prueba.
+//
+// Corre en Awake(), no en Start(): Unity garantiza que TODOS los Awake()
+// de la escena terminan antes que CUALQUIER Start() -- así, ObstacleSpawner
+// (que lee lanePlayers desde su propio Start()) ya lo ve resuelto, sin
+// importar en qué orden real corran los Awake() de los distintos
+// GameObjects de la escena entre sí (eso Unity NO lo garantiza).
+public class RoundLaneSetup : MonoBehaviour
+{
+    [System.Serializable]
+    public class LaneLayout
+    {
+        [Tooltip("Para cuántos jugadores es este layout (1 a 4).")]
+        public int playerCount = 1;
+        [Tooltip("X exacto de cada carril activo, medido a mano contra la geometría real del " +
+                 "chunk de ese tamaño (ver el procedimiento de medición/centrado ya usado para " +
+                 "el mapa de 2). Tiene que tener EXACTAMENTE 'Player Count' elementos, en el " +
+                 "mismo orden que Player Slots.")]
+        public float[] laneXPositions;
+    }
+
+    [Tooltip("Los hasta 4 GameObjects 'player' pre-armados en la escena, SIEMPRE en el mismo " +
+             "orden (slot 0, slot 1, ...). Nunca se crean ni se destruyen -- este script solo " +
+             "prende/apaga y reposiciona en X.")]
+    [SerializeField] private Transform[] playerSlots;
+    [Tooltip("Un layout por cantidad de jugadores soportada. Si falta el de la ronda actual, se " +
+             "usa el de mayor 'Player Count' disponible que no la supere (con aviso en consola) " +
+             "-- mismo criterio de fallback que ChunkSpawner.ResolveChunkPrefabsForRound, así los " +
+             "dos quedan consistentes solos sin coordinarse a propósito.")]
+    [SerializeField] private LaneLayout[] laneLayoutsByPlayerCount;
+    [SerializeField] private ObstacleSpawner obstacleSpawner;
+
+    [Tooltip("Cantidad de jugadores para ESTA prueba local (1 a 4) -- MISMO valor que " +
+             "GameManager.roundPlayerCount (mantenelos iguales a mano; son dos campos separados " +
+             "por ahora, no uno solo, porque este script necesita leerlo en su propio Awake() -- " +
+             "ver el comentario grande de arriba sobre por qué no puede depender de " +
+             "GameManager.Instance en ese momento). Hasta que la Fase 3 lea la cantidad real de " +
+             "jugadores conectados por red, es manual.")]
+    [SerializeField] private int roundPlayerCount = 1;
+
+    [Header("Cámara (parejas, solo importa con 4 jugadores)")]
+    [Tooltip("Índice DENTRO de Player Slots (0-3) que corresponde al jugador de ESTE cliente -- " +
+             "el mismo que ya tenés wireado como 'Target' en CameraFollow y como 'Player' en " +
+             "GameIntroSequence (mantenelos consistentes entre los tres). Con 4 jugadores, se usa " +
+             "para calcular la pareja (slot 0-1 -> Pareja 0, slot 2-3 -> Pareja 1) y elegir el " +
+             "centro de cámara correcto -- ver CameraFollow.CameraSettings.pairIndex. Cuando " +
+             "exista Netcode de verdad (Fase 3), este índice va a venir de qué carril te asignó " +
+             "la red, no de un valor fijo acá.")]
+    [SerializeField] private int localPlayerSlotIndex = 0;
+    [SerializeField] private CameraFollow cameraFollow;
+
+    private void Awake()
+    {
+        if (playerSlots == null || playerSlots.Length == 0)
+        {
+            Debug.LogError("[RoundLaneSetup] 'Player Slots' está vacío -- no hay ningún jugador " +
+                            "para activar.");
+            return;
+        }
+
+        LaneLayout layout = ResolveLayout(roundPlayerCount);
+        if (layout == null)
+        {
+            Debug.LogError($"[RoundLaneSetup] No hay ningún layout utilizable para " +
+                            $"{roundPlayerCount} jugador(es). Revisá 'Lane Layouts By Player Count'.");
+            return;
+        }
+
+        int activeCount = Mathf.Min(layout.playerCount, playerSlots.Length);
+        Transform[] activeLanes = new Transform[activeCount];
+
+        for (int i = 0; i < playerSlots.Length; i++)
+        {
+            if (playerSlots[i] == null) continue;
+
+            bool active = i < activeCount;
+            playerSlots[i].gameObject.SetActive(active);
+
+            if (active)
+            {
+                Vector3 pos = playerSlots[i].position;
+                pos.x = layout.laneXPositions[i];
+                playerSlots[i].position = pos;
+                activeLanes[i] = playerSlots[i];
+            }
+        }
+
+        if (obstacleSpawner != null) obstacleSpawner.SetLanePlayers(activeLanes);
+
+        // 2 carriles por pareja (pensado para 4 jugadores: slot 0-1 =
+        // Pareja 0, slot 2-3 = Pareja 1). Con 1/2/3 jugadores esto da
+        // siempre pairIndex=0 (localPlayerSlotIndex nunca pasa de 1 en esos
+        // casos), que es justo el valor por defecto de las configuraciones
+        // existentes de CameraFollow -- no les cambia nada.
+        if (cameraFollow != null)
+        {
+            int pairIndex = localPlayerSlotIndex / 2;
+            cameraFollow.SetActivePairIndex(pairIndex);
+        }
+    }
+
+    // Mismo criterio de fallback que ChunkSpawner.ResolveChunkPrefabsForRound:
+    // exacto si existe, si no el de mayor Player Count que no supere a la
+    // ronda actual -- para no dejar el juego sin jugadores por un layout
+    // que todavía no armaste, y para que el mapa (ChunkSpawner) y los
+    // carriles (acá) siempre terminen de acuerdo en cuántos jugadores hay
+    // de verdad, sin tener que coordinarse explícitamente entre sí.
+    private LaneLayout ResolveLayout(int roundPlayerCount)
+    {
+        LaneLayout exactMatch = null;
+        LaneLayout bestFallback = null;
+
+        foreach (LaneLayout layout in laneLayoutsByPlayerCount)
+        {
+            if (layout == null || layout.laneXPositions == null ||
+                layout.laneXPositions.Length < layout.playerCount) continue;
+
+            if (layout.playerCount == roundPlayerCount) exactMatch = layout;
+            if (layout.playerCount <= roundPlayerCount &&
+                (bestFallback == null || layout.playerCount > bestFallback.playerCount))
+            {
+                bestFallback = layout;
+            }
+        }
+
+        LaneLayout chosen = exactMatch ?? bestFallback;
+        if (chosen != null && exactMatch == null)
+        {
+            Debug.LogWarning($"[RoundLaneSetup] No hay un layout armado específicamente para " +
+                              $"{roundPlayerCount} jugador(es) -- usando el de " +
+                              $"{chosen.playerCount} como reemplazo. Armá el layout " +
+                              "correspondiente cuando puedas.");
+        }
+        return chosen;
+    }
+}

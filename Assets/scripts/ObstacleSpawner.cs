@@ -289,6 +289,21 @@ public class ObstacleSpawner : MonoBehaviour
         return obstacle;
     }
 
+    // Público para RoundLaneSetup: reemplaza los carriles activos según la
+    // cantidad de jugadores de la ronda (ver GameManager.RoundPlayerCount).
+    // Se llama desde el Awake() de RoundLaneSetup, ANTES de que el Start()
+    // de ACÁ corra (Unity garantiza que todos los Awake() de la escena
+    // terminan antes que cualquier Start()) -- así lanePlayers ya está
+    // resuelto para cuando Start() lo necesita. El array wireado a mano en
+    // el Inspector ("Lane Players") queda como valor de respaldo si no hay
+    // ningún RoundLaneSetup en la escena (ej. probando Gameplay.unity
+    // suelta, sin pasar por el Menú).
+    public void SetLanePlayers(Transform[] lanes)
+    {
+        if (lanes == null || lanes.Length == 0) return; // no pisamos con algo vacío, nos quedamos con lo wireado a mano
+        lanePlayers = lanes;
+    }
+
     // Hoy lo llama solo CleanupBehindPlayer (el obstáculo quedó atrás del
     // jugador). Antes RunnerController.OnTriggerEnter también lo llamaba al
     // chocarlo, para hacerlo desaparecer — eso se sacó a propósito: los

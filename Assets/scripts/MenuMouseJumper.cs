@@ -28,6 +28,18 @@ public class MenuMouseJumper : MonoBehaviour
              "largos/flotantes. De acá sale la duración de cada salto (no es un valor aparte).")]
     [SerializeField] private float gravity = 9.8f;
 
+    [Header("Altura de salto: mouse vs. fija")]
+    [Tooltip("Tildado (default, comportamiento de siempre): la altura de CADA salto sale del " +
+             "mouse LOCAL de este cliente (ver Height At Screen Top) -- correcto para TU propio " +
+             "personaje (el Jumper del menú principal, o tu propio slot en la Sala de Espera). " +
+             "Destildalo para los Jumpers de OTROS jugadores en la Sala de Espera (ver " +
+             "LobbyJumperSpawner.SetUseMouseForHeight) -- no tiene sentido que el personaje de " +
+             "otra persona salte copiando TU mouse; en ese caso usa Fixed Jump Height de abajo.")]
+    [SerializeField] private bool useMouseForHeight = true;
+    [Tooltip("Altura de salto (unidades del mundo, mismo rango que Height At Screen Top) cuando " +
+             "'Use Mouse For Height' está destildado -- fija, no depende de ningún mouse.")]
+    [SerializeField] private float fixedJumpHeight = 1f;
+
     [Header("Animación (opcional)")]
     [Tooltip("Opcional: si lo asignás, reproduce esta animación en loop, sostenida, todo el tiempo. " +
              "Si hay un personaje elegido en el menú (ver 'Personaje' abajo), esta referencia se " +
@@ -42,6 +54,12 @@ public class MenuMouseJumper : MonoBehaviour
              "normal si el modelo placeholder actual ya es hijo directo de 'Jumper'. Este mismo " +
              "objeto es el único preview de personaje del menú: no hay pedestal aparte.")]
     [SerializeField] private Transform modelParent;
+    [Tooltip("Tildado (default): al arrancar, se pone solo el personaje ELEGIDO LOCALMENTE " +
+             "(CharacterSelection.Instance.Selected) -- es lo que ya hacía este script siempre. " +
+             "Destildalo para los Jumpers que arma LobbyJumperSpawner en la Sala de Espera: esos " +
+             "representan a OTRO jugador de la sala, así que no tienen que arrancar mostrando tu " +
+             "propia selección -- RefreshCharacter(int) los va a poner apenas se instancian.")]
+    [SerializeField] private bool autoRefreshOnStart = true;
     [Tooltip("Animator Controller compartido por todos los personajes (arrastrá acá " +
              "'Player Animator.controller'). OJO: un FBX recién importado trae su propio " +
              "Animator SIN ningún Controller asignado -- si no lo ponemos a mano en cada " +
@@ -82,7 +100,23 @@ public class MenuMouseJumper : MonoBehaviour
     {
         // Se aplica ANTES de arrancar el loop de salto, así el personaje
         // correcto ya está puesto (modelo + Animator) desde el primer salto.
-        RefreshCharacter();
+        // Si autoRefreshOnStart está apagado (Jumpers de LobbyJumperSpawner),
+        // nos quedamos sin modelo hasta que llamen a RefreshCharacter(int)
+        // a mano -- el loop de salto arranca igual, no depende de esto.
+        if (autoRefreshOnStart) RefreshCharacter();
+    }
+
+    // El loop de salto arranca acá, no en Start(): Start() corre UNA sola
+    // vez en toda la vida del objeto, pero OnEnable() corre cada vez que se
+    // reactiva con SetActive(true) -- que es justo lo que hace
+    // LobbyJumperSpawner con el Jumper decorativo del menú (lo apaga al
+    // entrar a la Sala de Espera, lo prende de nuevo al salir). Con el loop
+    // solo en Start(), al reactivarlo la corrutina (cortada sola al
+    // desactivarse) nunca se reiniciaba, y el Animator quedaba pegado en el
+    // estado por defecto del controller (Sprint_Loop / corriendo) en vez de
+    // volver a Jump_Loop.
+    private void OnEnable()
+    {
         StartCoroutine(JumpLoop());
     }
 
@@ -100,6 +134,43 @@ public class MenuMouseJumper : MonoBehaviour
         CharacterSelection.CharacterOption selected =
             CharacterSelection.Instance != null ? CharacterSelection.Instance.Selected : null;
 
+        ApplyCharacter(selected);
+    }
+
+    // Igual que RefreshCharacter(), pero mostrando un personaje EXPLÍCITO
+    // (por índice en CharacterSelection.characters) en vez del elegido
+    // localmente -- lo usa LobbyJumperSpawner para representar a otro
+    // jugador de la sala, cuyo personaje sincroniza LobbyPlayerListSync.
+    public void RefreshCharacter(int characterIndex)
+    {
+        CharacterSelection.CharacterOption selected =
+            CharacterSelection.Instance != null ? CharacterSelection.Instance.Get(characterIndex) : null;
+
+        ApplyCharacter(selected);
+    }
+
+    // Público para LobbyJumperSpawner: decide si ESTE Jumper puntual sigue
+    // el mouse local (true, el de siempre) o salta con Fixed Jump Height
+    // (false) -- ver el comentario grande del campo useMouseForHeight.
+    // Llamalo UNA vez, apenas se instancia (no cambia solo con el tiempo).
+    public void SetUseMouseForHeight(bool useMouse)
+    {
+        useMouseForHeight = useMouse;
+    }
+
+    // Público para LobbyJumperSpawner: sobreescribe Fixed Jump Height para
+    // ESTA instancia puntual -- así cada slot de la Sala de Espera puede
+    // saltar a una altura distinta (ver LobbyJumperSpawner.slotFixedJumpHeights)
+    // en vez de que todos los Jumpers ajenos salten parejo a la misma altura
+    // del Inspector del template. Sin efecto mientras useMouseForHeight esté
+    // en true (ese caso ignora fixedJumpHeight por completo, ver Jump()).
+    public void SetFixedJumpHeight(float height)
+    {
+        fixedJumpHeight = height;
+    }
+
+    private void ApplyCharacter(CharacterSelection.CharacterOption selected)
+    {
         if (selected == null || selected.prefab == null) return;
 
         Transform parent = modelParent != null ? modelParent : transform;
@@ -156,11 +227,14 @@ public class MenuMouseJumper : MonoBehaviour
     }
 
     // Un solo salto: sube y baja (curva de seno), con la altura Y la
-    // duración fijadas al arrancar ESTE salto puntual, calculadas ambas a
-    // partir de dónde está el mouse en ese instante.
+    // duración fijadas al arrancar ESTE salto puntual. La altura sale del
+    // mouse local (comportamiento de siempre) SOLO si useMouseForHeight
+    // está tildado -- si no, usa fixedJumpHeight tal cual (ver
+    // SetUseMouseForHeight, que lo destilda para los Jumpers de otros
+    // jugadores en la Sala de Espera).
     private IEnumerator Jump()
     {
-        float peakHeight = GetMouseHeight01() * heightAtScreenTop;
+        float peakHeight = useMouseForHeight ? GetMouseHeight01() * heightAtScreenTop : fixedJumpHeight;
 
         // Tiempo de vuelo de un tiro vertical bajo gravedad constante:
         // v0 = sqrt(2 * g * h) (velocidad inicial necesaria para llegar a

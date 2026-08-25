@@ -1,6 +1,5 @@
 using TMPro;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 
 // Conecta los botones del menú de inicio con CharacterSelection y con el
 // Jumper (MenuMouseJumper). Enganchá estos métodos públicos a los
@@ -8,8 +7,9 @@ using UnityEngine.SceneManagement;
 // necesita parámetros, así que van directo en la lista de OnClick() sin
 // configuración extra.
 //
-// El menú tiene DOS paneles (dos GameObjects que se prenden/apagan, no dos
-// escenas): el principal (título + Jugar + "Elegir Personaje") y el de
+// El menú tiene DOS paneles propios de este script (dos GameObjects que se
+// prenden/apagan, no dos escenas): el principal (título + Crear/Unirse a
+// Sala, manejados por RoomFlowController + "Elegir Personaje") y el de
 // selección (flechas + nombre + Volver). NO hay un pedestal 3D aparte: el
 // preview del personaje elegido es el mismo Jumper que salta en el panel
 // principal (ver MenuMouseJumper.RefreshCharacter) — un solo personaje
@@ -17,7 +17,7 @@ using UnityEngine.SceneManagement;
 public class MenuController : MonoBehaviour
 {
     [Header("Paneles")]
-    [Tooltip("Panel principal: título, botón Jugar, botón Elegir Personaje.")]
+    [Tooltip("Panel principal: título, botones Crear/Unirse a Sala (RoomFlowController), botón Elegir Personaje.")]
     [SerializeField] private GameObject mainPanel;
     [Tooltip("Panel de selección: flechas, nombre del personaje, botón Volver.")]
     [SerializeField] private GameObject characterSelectPanel;
@@ -37,12 +37,11 @@ public class MenuController : MonoBehaviour
     [SerializeField] private TMP_Text characterNameText;
 
     [Header("Juego")]
-    [Tooltip("Nombre EXACTO de la escena de juego (tal cual aparece en Build Settings).")]
-    [SerializeField] private string gameplaySceneName = "SampleScene";
-    [Tooltip("Mensaje que avisa 'configurá tu cámara antes de jugar' si el jugador aprieta " +
-             "Jugar sin haber calibrado en Configuración todavía. Recomendado: ponelo como " +
-             "HIJO de mainPanel -- así se oculta solo apenas se navega a cualquier otro panel, " +
-             "sin necesitar lógica extra. Opcional: dejalo vacío para no bloquear nada.")]
+    [Tooltip("Mensaje 'configurá tu cámara antes de jugar' -- lo prende RoomFlowController " +
+             "(Crear/Unirse a Sala), no este script; el mismo GameObject se comparte entre los " +
+             "dos. Acá solo se apaga, ver ShowMainPanel(). Recomendado: ponelo como HIJO de " +
+             "mainPanel -- así se oculta solo apenas se navega a cualquier otro panel, sin " +
+             "necesitar lógica extra. Opcional: dejalo vacío para no bloquear nada.")]
     [SerializeField] private GameObject cameraNotConfiguredWarning;
 
     private void Start()
@@ -80,7 +79,8 @@ public class MenuController : MonoBehaviour
         if (mainPanel != null) mainPanel.SetActive(true);
         if (cameraMover != null) cameraMover.ShowMainMenuView();
         // Se apaga cada vez que se vuelve al panel principal, para que no
-        // quede colgado de una vez anterior que apretaste Jugar sin cámara.
+        // quede colgado de una vez anterior en que RoomFlowController lo
+        // prendió (intentaste Crear/Unirse a Sala sin cámara calibrada).
         if (cameraNotConfiguredWarning != null) cameraNotConfiguredWarning.SetActive(false);
     }
 
@@ -96,24 +96,6 @@ public class MenuController : MonoBehaviour
         CharacterSelection.Instance?.SelectPrevious();
         if (jumper != null) jumper.RefreshCharacter();
         UpdateNameLabel();
-    }
-
-    public void OnPlayPressed()
-    {
-        // Bloqueo: no dejar arrancar la partida si el jugador nunca pasó
-        // por Configuración a calibrar la cámara (o si calibró y falló --
-        // ver NativePoseInputSource.IsCalibrated/HasCameraError). Sin la
-        // cámara calibrada, el juego arranca pero nunca responde al salto/
-        // agache -- mejor avisar acá, antes de cambiar de escena, que
-        // dejarlo entrar a un juego que no va a poder jugar.
-        bool cameraReady = NativePoseInputSource.Instance != null && NativePoseInputSource.Instance.IsCalibrated;
-        if (!cameraReady)
-        {
-            if (cameraNotConfiguredWarning != null) cameraNotConfiguredWarning.SetActive(true);
-            return;
-        }
-
-        SceneManager.LoadScene(gameplaySceneName);
     }
 
     private void UpdateNameLabel()
