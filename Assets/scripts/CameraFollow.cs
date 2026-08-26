@@ -69,13 +69,20 @@ public class CameraFollow : MonoBehaviour
     // que no les cambia nada.
     private int activePairIndex = 0;
 
-    // Público para RoundLaneSetup. Cuando exista Netcode de verdad (Fase 3),
-    // quien llame esto va a ser la lógica de red (según qué carril te
-    // asignó la sala), no RoundLaneSetup -- el resto de CameraFollow no
-    // necesita cambiar nada para ese momento.
+    // Público para RoundLaneSetup, que ahora lo llama TARDE (cuando el estado
+    // de ronda llegó por red), no en su Awake() como antes -- por eso acá hay
+    // que volver a resolver la configuración, no alcanza con guardar el
+    // índice y esperar a Start(): para cuando esto se llama, Start() ya pasó.
+    //
+    // ResolveSettings() es idempotente (solo lee tablas y escribe posición/
+    // rotación/FOV de la cámara hija), así que llamarla dos veces no molesta:
+    // la primera, en Start(), deja la cámara con el respaldo local; la
+    // segunda, acá, con los datos reales de la sala. Las dos pasan tapadas
+    // por la pantalla negra, no se ve ningún salto.
     public void SetActivePairIndex(int pairIndex)
     {
         activePairIndex = pairIndex;
+        ResolveSettings();
     }
 
     // Null = sin tabla (o ninguna entrada utilizable) -> seguir target.x como siempre.

@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -200,7 +201,47 @@ public class ObstacleSpawner : MonoBehaviour
         rng = new System.Random(round.ObstacleSeed);
     }
 
+    // INVERSION DE DEPENDENCIA (Fase 3.2, 25/8). Antes esto era Start(), y
+    // funcionaba porque RoundLaneSetup resolvía los carriles en su Awake() --
+    // Unity garantiza que TODOS los Awake() terminan antes que cualquier
+    // Start(), así que para cuando esto corría, lanePlayers ya estaba puesto.
+    //
+    // Ese contrato se rompe con Netcode: la cantidad real de jugadores (y más
+    // adelante, de quién es cada slot) viaja por red y NO está disponible en
+    // Awake() -- los NetworkObject in-scene recién spawnean después de que la
+    // escena termina de cargar. RoundLaneSetup ahora resuelve tarde, por
+    // callback, así que este spawner no puede seguir leyendo en Start().
+    //
+    // Invertimos quién manda: ya no leemos nosotros, nos avisan. Lo dispara
+    // SetLanePlayers(), que es justo el momento en que los carriles quedan
+    // decididos, sea con red o sin ella.
+    private bool isInitialized;
+
+    // Red de seguridad: si NADIE llama a SetLanePlayers (una escena de prueba
+    // sin RoundLaneSetup, por ejemplo), arrancamos igual con los carriles que
+    // estén wireados a mano en el Inspector -- que es exactamente lo que
+    // hacía este script antes de la inversión. Sin esto, un descuido de
+    // wireado dejaría el juego corriendo para siempre sin un solo obstáculo,
+    // y sin decir por qué.
+    private const float LaneAssignmentTimeoutSeconds = 12f;
+
+    private IEnumerator InitializeIfNobodyDoes()
+    {
+        yield return new WaitForSeconds(LaneAssignmentTimeoutSeconds);
+        if (isInitialized) yield break;
+
+        Debug.LogWarning($"[ObstacleSpawner] Nadie llamó a SetLanePlayers en " +
+                          $"{LaneAssignmentTimeoutSeconds}s (¿falta el RoundLaneSetup en la " +
+                          "escena?) -- arrancando con los carriles wireados a mano.");
+        Initialize();
+    }
+
     private void Start()
+    {
+        StartCoroutine(InitializeIfNobodyDoes());
+    }
+
+    private void Initialize()
     {
         if (lanePlayers == null || lanePlayers.Length == 0 || lanePlayers[0] == null)
         {
@@ -241,10 +282,16 @@ public class ObstacleSpawner : MonoBehaviour
         {
             Debug.LogError("[ObstacleSpawner] No hay ningún prefab válido en 'Obstacle Prefabs'. El spawner no va a generar nada.");
         }
+
+        isInitialized = true;
     }
 
     private void Update()
     {
+        // Hasta que RoundLaneSetup no diga qué carriles hay, no hay nada que
+        // spawnear (ni desde dónde medir el progreso en Z). Ver Initialize().
+        if (!isInitialized) return;
+
         if (GameManager.Instance != null && GameManager.Instance.IsGameOver) return;
         // Pausado hasta que termine la intro de cámara (ver GameIntroSequence).
         if (GameManager.Instance != null && !GameManager.Instance.HasGameplayStarted) return;
@@ -369,6 +416,10 @@ public class ObstacleSpawner : MonoBehaviour
     {
         if (lanes == null || lanes.Length == 0) return; // no pisamos con algo vacío, nos quedamos con lo wireado a mano
         lanePlayers = lanes;
+
+        // Acá es donde el spawner arranca de verdad -- ver el comentario
+        // grande en Initialize() sobre por qué ya no puede hacerlo en Start().
+        Initialize();
     }
 
     // Hoy lo llama solo CleanupBehindPlayer (el obstáculo quedó atrás del

@@ -81,7 +81,11 @@ public class ChunkSpawner : MonoBehaviour
 
     private void Start()
     {
-        ResolveChunkPrefabsForRound();
+        // ResolveChunkPrefabsForRound() ya NO se llama acá (Fase 3.2): lee
+        // GameManager.RoundPlayerCount, que en Start() todavía devuelve el
+        // respaldo local -- la cantidad real de jugadores viaja por red y
+        // llega después. Ahora se llama adentro de la corrutina, una vez que
+        // el estado de ronda se resolvió.
         StartCoroutine(SpawnInitialChunks());
     }
 
@@ -154,6 +158,11 @@ public class ChunkSpawner : MonoBehaviour
         // semilla arma TODO el mapa con la equivocada y ve un escenario
         // distinto al de los demás durante toda la ronda.
         yield return WaitForSeed();
+
+        // Recién ahora GameManager.RoundPlayerCount devuelve la cantidad real
+        // de jugadores de la sala (ver Start()), así que este es el momento
+        // correcto para elegir el set de chunks del tamaño de mapa que toca.
+        ResolveChunkPrefabsForRound();
 
         // Un chunk extra ANTES del arranque (Z negativo) -- solo para que
         // la intro de cámara (GameIntroSequence, que muestra al jugador de

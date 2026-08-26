@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 
 // Activa, en Gameplay.unity, la cantidad exacta de "carriles" (jugadores)
@@ -5,15 +6,30 @@ using UnityEngine;
 // GameObject en el proceso. Los hasta 4 GameObjects "player" posibles YA
 // están armados de antemano en la escena (ver playerSlots); este script
 // solo prende los primeros N, los reposiciona en el X que le toca a cada
-// uno según el mapa de ese tamaño, y apaga el resto -- así probar con
-// distinta cantidad de jugadores es cambiar el número acá o en
-// GameManager, no editar la Hierarchy a mano en cada prueba.
+// uno según el mapa de ese tamaño, y apaga el resto.
 //
-// Corre en Awake(), no en Start(): Unity garantiza que TODOS los Awake()
-// de la escena terminan antes que CUALQUIER Start() -- así, ObstacleSpawner
-// (que lee lanePlayers desde su propio Start()) ya lo ve resuelto, sin
-// importar en qué orden real corran los Awake() de los distintos
-// GameObjects de la escena entre sí (eso Unity NO lo garantiza).
+// QUIÉN MANDA A QUIÉN (cambió en la Fase 3.2, 25/8 -- leer antes de tocar
+// el orden de arranque de esta escena):
+//
+// Antes esto resolvía en Awake(), apoyándose en que Unity garantiza que
+// TODOS los Awake() terminan antes que CUALQUIER Start(): así
+// ObstacleSpawner, que leía los carriles en su propio Start(), siempre los
+// encontraba listos.
+//
+// Ese contrato ya no se puede sostener. La cantidad real de jugadores viaja
+// por red (NetworkRoundState) y los NetworkObject in-scene recién spawnean
+// DESPUÉS de que la escena termina de cargar -- o sea, en Awake() el dato
+// todavía no existe. Confirmado en vivo: el cliente recibe el estado de
+// ronda ~2s después que el host.
+//
+// Así que la dependencia se invirtió: este script ya no resuelve solo al
+// arrancar, sino cuando el estado de ronda está listo, y RECIÉN AHÍ avisa a
+// ObstacleSpawner (SetLanePlayers) y a CameraFollow (SetActivePairIndex).
+// Ninguno de los dos lee nada por su cuenta: esperan a que se les avise.
+//
+// Sin red (Gameplay.unity abierta suelta desde el Editor) el camino es el
+// mismo, solo que el estado de ronda se resuelve solo con valores locales y
+// la espera dura un frame.
 public class RoundLaneSetup : MonoBehaviour
 {
     [System.Serializable]
@@ -39,13 +55,12 @@ public class RoundLaneSetup : MonoBehaviour
     [SerializeField] private LaneLayout[] laneLayoutsByPlayerCount;
     [SerializeField] private ObstacleSpawner obstacleSpawner;
 
-    [Tooltip("Cantidad de jugadores para ESTA prueba local (1 a 4) -- MISMO valor que " +
-             "GameManager.roundPlayerCount (mantenelos iguales a mano; son dos campos separados " +
-             "por ahora, no uno solo, porque este script necesita leerlo en su propio Awake() -- " +
-             "ver el comentario grande de arriba sobre por qué no puede depender de " +
-             "GameManager.Instance en ese momento). Hasta que la Fase 3 lea la cantidad real de " +
-             "jugadores conectados por red, es manual.")]
-    [SerializeField] private int roundPlayerCount = 1;
+    // El campo 'roundPlayerCount' que vivía acá se BORRÓ en la Fase 3.2:
+    // era un duplicado de GameManager.roundPlayerCount que había que
+    // mantener igual a mano, y existía solo porque este script resolvía en
+    // Awake() y no podía depender de GameManager en ese momento. Ahora
+    // resuelve tarde (ver SetupWhenRoundStateReady), así que lee la única
+    // fuente buena: GameManager.RoundPlayerCount.
 
     [Header("Cámara (parejas, solo importa con 4 jugadores)")]
     [Tooltip("Índice DENTRO de Player Slots (0-3) que corresponde al jugador de ESTE cliente -- " +
@@ -58,7 +73,41 @@ public class RoundLaneSetup : MonoBehaviour
     [SerializeField] private int localPlayerSlotIndex = 0;
     [SerializeField] private CameraFollow cameraFollow;
 
+    // Tope de espera del estado de ronda. Sin esto, un fallo de red dejaría
+    // la escena congelada para siempre y sin ningún carril activo, en negro y
+    // sin explicación (guardarraíl 8 del proyecto: jamás un "esperar hasta
+    // que" sin salida). Al vencerse se arma la ronda igual, con el respaldo
+    // local de GameManager.
+    private const float RoundStateWaitTimeoutSeconds = 10f;
+
     private void Awake()
+    {
+        StartCoroutine(SetupWhenRoundStateReady());
+    }
+
+    private IEnumerator SetupWhenRoundStateReady()
+    {
+        NetworkRoundState round = NetworkRoundState.Instance;
+
+        float waited = 0f;
+        while (round != null && !round.IsResolved && waited < RoundStateWaitTimeoutSeconds)
+        {
+            waited += Time.deltaTime;
+            yield return null;
+        }
+
+        if (round != null && !round.IsResolved)
+        {
+            Debug.LogWarning($"[RoundLaneSetup] El estado de ronda no llegó en " +
+                              $"{RoundStateWaitTimeoutSeconds}s -- armando la ronda con el valor de " +
+                              "respaldo de GameManager. Los carriles pueden no coincidir con los " +
+                              "de los demás jugadores.");
+        }
+
+        SetupRound();
+    }
+
+    private void SetupRound()
     {
         if (playerSlots == null || playerSlots.Length == 0)
         {
@@ -67,6 +116,12 @@ public class RoundLaneSetup : MonoBehaviour
             return;
         }
 
+        // Fuente única: GameManager.RoundPlayerCount, que devuelve la cantidad
+        // REAL de conectados cuando hay sala, y el valor de Inspector cuando
+        // se abre la escena suelta. Antes este script tenía su propio campo
+        // duplicado que había que mantener igual a mano.
+        int roundPlayerCount = GameManager.Instance != null ? GameManager.Instance.RoundPlayerCount : 1;
+
         LaneLayout layout = ResolveLayout(roundPlayerCount);
         if (layout == null)
         {
@@ -74,6 +129,9 @@ public class RoundLaneSetup : MonoBehaviour
                             $"{roundPlayerCount} jugador(es). Revisá 'Lane Layouts By Player Count'.");
             return;
         }
+
+        Debug.Log($"[RoundLaneSetup] Armando ronda de {roundPlayerCount} jugador(es) " +
+                  $"(layout de {layout.playerCount}).");
 
         int activeCount = Mathf.Min(layout.playerCount, playerSlots.Length);
         Transform[] activeLanes = new Transform[activeCount];

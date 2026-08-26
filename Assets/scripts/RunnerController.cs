@@ -246,8 +246,21 @@ public class RunnerController : MonoBehaviour
         transform.position = pos;
     }
 
+    // Un carril apagado no reacciona al input (Fase 3.2, 25/8). Hace falta
+    // porque RoundLaneSetup pasó a apagar los slots que sobran TARDE (cuando
+    // llega el estado de ronda por red) en vez de en su Awake(): antes, un
+    // slot apagado nunca llegaba a correr su Start(), así que jamás se
+    // suscribía al input. Ahora sí alcanza a suscribirse, y después lo apagan
+    // -- sin este chequeo, el próximo salto real le dispararía una corrutina
+    // a un GameObject inactivo ("Coroutine couldn't be started because the
+    // game object is inactive").
+    //
+    // Se desarma solo en la Fase 3.3, cuando cada RunnerController pase a
+    // escuchar el input únicamente si es el suyo (IsOwner).
     private void HandleJump()
     {
+        if (!isActiveAndEnabled) return;
+
         // Una vez terminado el juego, ignoramos cualquier salto/agache/
         // parado que siga llegando de la detección real -- sin esto, el
         // "cadáver" de GameOutroSequence podía seguir reaccionando a que
@@ -319,6 +332,7 @@ public class RunnerController : MonoBehaviour
 
     private void HandleCrouch()
     {
+        if (!isActiveAndEnabled) return; // carril apagado, ver comentario en HandleJump
         if (GameManager.Instance != null && GameManager.Instance.IsGameOver) return;
         // Ver comentario grande en HandleJump -- mismo criterio durante la
         // pantalla de carga / paneo de cámara de arranque.
@@ -345,6 +359,7 @@ public class RunnerController : MonoBehaviour
 
     private void HandleStand()
     {
+        if (!isActiveAndEnabled) return; // carril apagado, ver comentario en HandleJump
         if (GameManager.Instance != null && GameManager.Instance.IsGameOver) return;
         // Ver comentario grande en HandleJump -- mismo criterio durante la
         // pantalla de carga / paneo de cámara de arranque.

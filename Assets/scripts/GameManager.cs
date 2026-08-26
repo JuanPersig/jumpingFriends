@@ -7,15 +7,32 @@ public class GameManager : Singleton<GameManager>
     [SerializeField] private int startingLives = 3;
 
     [Header("Multijugador")]
-    [Tooltip("Cantidad de jugadores de ESTA ronda (1 a 4). Manual por ahora (se sacó el " +
-             "selector de botones de Configuración y el RoundSettings que lo respaldaba, " +
-             "25/8) -- hasta que la Fase 3 lea la cantidad real de jugadores conectados por " +
-             "red, este es un valor fijo de Inspector. Si tocás esto a mano para probar " +
-             "localmente varios carriles, mantenelo IGUAL al de RoundLaneSetup (mismo campo, " +
-             "duplicado por ahora porque ese script necesita leerlo en su propio Awake() -- ver " +
-             "el comentario ahí).")]
+    [Tooltip("RESPALDO para cuando NO hay red: cuántos carriles activar si abrís Gameplay.unity " +
+             "suelta desde el Editor, sin pasar por una sala. Con una sala activa este valor se " +
+             "IGNORA -- manda la cantidad real de jugadores conectados (NetworkRoundState). Ya no " +
+             "hace falta mantenerlo sincronizado a mano con ningún otro script: RoundLaneSetup y " +
+             "ChunkSpawner leen esta misma propiedad, no un campo propio.")]
     [SerializeField] private int roundPlayerCount = 1;
-    public int RoundPlayerCount => roundPlayerCount;
+
+    // Fuente ÚNICA de "cuántos jugadores hay en esta ronda" (Fase 3.2, 25/8).
+    // Antes esto devolvía el campo de Inspector de arriba, y RoundLaneSetup
+    // tenía ADEMÁS su propio campo duplicado que había que mantener igual a
+    // mano. Ahora los dos leen de acá, y acá manda la red cuando la hay.
+    //
+    // OJO CON EL MOMENTO EN QUE SE LEE: los NetworkObject in-scene recién
+    // spawnean DESPUÉS de que la escena termina de cargar, así que durante
+    // los Awake() de la escena esto todavía devuelve el respaldo. Quien
+    // necesite el valor real tiene que esperar a que NetworkRoundState se
+    // resuelva -- ver RoundLaneSetup, que es hoy el único que decide cuándo.
+    public int RoundPlayerCount
+    {
+        get
+        {
+            NetworkRoundState round = NetworkRoundState.Instance;
+            if (round != null && round.IsResolved) return round.PlayerCount;
+            return roundPlayerCount;
+        }
+    }
 
     [Header("Debug")]
     [Tooltip("Debug: tildado, los choques no restan vidas (útil para probar cosas — " +
