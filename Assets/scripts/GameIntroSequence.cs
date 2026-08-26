@@ -81,6 +81,26 @@ public class GameIntroSequence : MonoBehaviour
         StartCoroutine(ApplyStartPoseRoutine());
     }
 
+    // Todos los carriles de la escena, incluidos los que RoundLaneSetup vaya
+    // a apagar después (por eso FindObjectsInactive.Include): la pose de
+    // arranque se pide ANTES de que se sepa cuántos jugadores hay, así que
+    // conviene ponérsela a todos y que los que sobren se apaguen solos. Es
+    // gratis: los apagados no se ven.
+    //
+    // Se busca UNA sola vez -- los 4 slots están puestos a mano en la escena
+    // y nunca se crean ni se destruyen (ver PlayerSlotAssigner).
+    private RunnerController[] cachedRunners;
+
+    private RunnerController[] AllRunners()
+    {
+        if (cachedRunners == null || cachedRunners.Length == 0)
+        {
+            cachedRunners = FindObjectsByType<RunnerController>(
+                FindObjectsInactive.Include, FindObjectsSortMode.None);
+        }
+        return cachedRunners;
+    }
+
     private IEnumerator ApplyStartPoseRoutine()
     {
         // Un frame de por medio antes de pedirle al Animator el estado de
@@ -89,14 +109,22 @@ public class GameIntroSequence : MonoBehaviour
         // su estado por defecto en este instante exacto.
         yield return null;
 
-        if (player != null && !string.IsNullOrEmpty(introClipName))
+        if (!string.IsNullOrEmpty(introClipName))
         {
-            player.PlayCustomAnimation(introClipName);
-            // La rotación que se ve bien para la animación de correr no es
-            // la misma que la que se ve bien para la pose de arranque (ver
-            // RunnerController.startPoseModelYRotation/runningModelYRotation)
-            // -- se ajusta acá, junto con la animación, no antes.
-            player.ApplyStartPoseRotation();
+            // A TODOS los carriles, no solo al del Inspector (Fase 3.3,
+            // 25/8). 'player' está wireado a mano al slot 0, así que antes
+            // solo ese personaje esperaba agachado: en una partida de dos, el
+            // otro arrancaba parado en las dos pantallas.
+            foreach (RunnerController runner in AllRunners())
+            {
+                if (runner == null) continue;
+                runner.PlayCustomAnimation(introClipName);
+                // La rotación que se ve bien para la animación de correr no es
+                // la misma que la que se ve bien para la pose de arranque (ver
+                // RunnerController.startPoseModelYRotation/runningModelYRotation)
+                // -- se ajusta acá, junto con la animación, no antes.
+                runner.ApplyStartPoseRotation();
+            }
         }
 
         Transform cam = cameraFollow != null ? cameraFollow.transform : null;
@@ -134,10 +162,11 @@ public class GameIntroSequence : MonoBehaviour
         // correr normal -- si no, esto es un no-op inofensivo (misma que ya
         // estaba sonando). La rotación del modelo también vuelve a la que
         // corresponde para correr (ver ApplyStartPoseRotation más arriba).
-        if (player != null)
+        foreach (RunnerController runner in AllRunners())
         {
-            player.ResumeRunAnimation();
-            player.ApplyRunningRotation();
+            if (runner == null) continue;
+            runner.ResumeRunAnimation();
+            runner.ApplyRunningRotation();
         }
 
         GameManager.Instance?.BeginGameplay();

@@ -29,17 +29,23 @@ public class PlayerCharacterSpawner : MonoBehaviour
              "Controller directo al asset; los personajes nuevos no.")]
     [SerializeField] private RuntimeAnimatorController sharedController;
 
+    private Transform ModelParent => modelParent != null ? modelParent : transform;
+
+    // Transformación LOCAL del placeholder ORIGINAL de la escena. Se captura
+    // una sola vez, en Awake, y se reusa en cada swap.
+    //
+    // Capturarla una sola vez NO es un detalle de optimización, es
+    // obligatorio: CharacterModelSwapper aplica el modelRotationOffset propio
+    // de cada personaje SOBRE esta base. Si la releyéramos del modelo ya
+    // swapeado, el offset del personaje anterior quedaría horneado en la base
+    // y el siguiente sumaría el suyo encima -- la rotación se iría acumulando
+    // swap a swap. Con el multijugador esto pasó a importar de verdad: ahora
+    // cada slot puede swapear DOS veces (el personaje local en Awake, y el
+    // del dueño real cuando llega por red).
+    private CharacterModelSwapper.LocalTransform baseTransform;
+
     private void Awake()
     {
-        CharacterSelection.CharacterOption selected =
-            CharacterSelection.Instance != null ? CharacterSelection.Instance.Selected : null;
-
-        // Sin selección (o sin prefab asignado) -> nos quedamos con el
-        // modelo y el Animator que ya estén puestos a mano en el Inspector.
-        if (selected == null || selected.prefab == null) return;
-
-        Transform parent = modelParent != null ? modelParent : transform;
-
         // OJO: Instantiate con el overload (prefab, position, rotation,
         // parent) fija posición y rotación en MUNDO pero NO copia la escala
         // del hijo viejo -- el nuevo modelo queda con la escala de fábrica
@@ -47,20 +53,49 @@ public class PlayerCharacterSpawner : MonoBehaviour
         // juego (causa real de que el personaje se viera invisible/gigante
         // tras el swap). Por eso se copia a mano la transformación LOCAL
         // completa del placeholder actual (ver CharacterModelSwapper).
-        if (parent.childCount == 0)
+        if (ModelParent.childCount == 0)
         {
             Debug.LogWarning("[PlayerCharacterSpawner] No había ningún modelo placeholder " +
                               "de donde copiar posición/rotación/escala -- el personaje nuevo " +
                               "arranca en (0,0,0) escala 1, revisalo si se ve mal.");
         }
-        CharacterModelSwapper.LocalTransform baseTransform = CharacterModelSwapper.LocalTransform.FromFirstChildOrIdentity(parent);
+        baseTransform = CharacterModelSwapper.LocalTransform.FromFirstChildOrIdentity(ModelParent);
+
+        // Personaje elegido LOCALMENTE, como siempre. En una partida en red
+        // esto es solo provisorio: PlayerSlot vuelve a llamar a
+        // ApplyCharacter() con el personaje del dueño REAL de este carril
+        // apenas llega por red. Los dos swaps pasan tapados por la pantalla
+        // negra, así que no se ve ningún cambio.
+        //
+        // Se mantiene igual porque es el único camino cuando NO hay red
+        // (Gameplay.unity abierta suelta desde el Editor): ahí nadie va a
+        // llamar a ApplyCharacter() nunca.
+        if (CharacterSelection.Instance != null)
+        {
+            ApplyCharacter(CharacterSelection.Instance.SelectedIndex);
+        }
+    }
+
+    // Público para PlayerSlot: pone en ESTE carril el personaje que eligió su
+    // dueño de verdad. Antes cada máquina le ponía a todos los carriles el
+    // personaje elegido localmente -- de ahí que se viera el mismo skin
+    // duplicado en las dos pantallas.
+    public void ApplyCharacter(int characterIndex)
+    {
+        if (CharacterSelection.Instance == null) return;
+
+        CharacterSelection.CharacterOption selected = CharacterSelection.Instance.Get(characterIndex);
+
+        // Sin selección (o sin prefab asignado) -> nos quedamos con el
+        // modelo y el Animator que ya estén puestos a mano en el Inspector.
+        if (selected == null || selected.prefab == null) return;
 
         // Swap de modelo + Animator compartido con MenuMouseJumper (mismos
         // gotchas de FBX: root motion, Controller sin asignar) -- ver
         // CharacterModelSwapper. RunnerController mueve todo a mano (sin
         // física, sin root motion) por diseño, de ahí que el swap siempre
         // apague applyRootMotion.
-        Animator newAnimator = CharacterModelSwapper.Swap(parent, selected, baseTransform, sharedController, "PlayerCharacterSpawner");
+        Animator newAnimator = CharacterModelSwapper.Swap(ModelParent, selected, baseTransform, sharedController, "PlayerCharacterSpawner");
         GetComponent<RunnerController>().SetAnimator(newAnimator);
     }
 }

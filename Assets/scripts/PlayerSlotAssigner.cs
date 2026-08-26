@@ -84,6 +84,25 @@ public class PlayerSlotAssigner : MonoBehaviour
             if (IsSlotTaken(slot)) continue;
 
             playerSlots[slot].ChangeOwnership(clientId);
+
+            // Marca explícita de "este carril ya tiene dueño de verdad"
+            // (Fase 3.3). Sin esto, nadie puede distinguir un slot que le
+            // asignamos de uno que simplemente SIGUE siendo del servidor
+            // porque nadie lo reclamó: al spawnear, los NetworkObject
+            // in-scene son propiedad del servidor, así que el host es dueño
+            // de los cuatro. Ver PlayerSlot.IsMine.
+            PlayerSlot playerSlot = playerSlots[slot].GetComponent<PlayerSlot>();
+            if (playerSlot != null)
+            {
+                playerSlot.MarkAssigned();
+            }
+            else
+            {
+                Debug.LogError($"[PlayerSlotAssigner] '{playerSlots[slot].name}' no tiene el " +
+                                "componente PlayerSlot -- ese jugador no va a poder controlar su " +
+                                "personaje ni mostrar su skin.");
+            }
+
             assignedSlots[clientId] = slot;
             Debug.Log($"[PlayerSlotAssigner] Cliente {clientId} -> slot {slot} ({playerSlots[slot].name}).");
             return;

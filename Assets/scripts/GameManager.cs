@@ -91,12 +91,20 @@ public class GameManager : Singleton<GameManager>
         }
     }
 
+    // Se dispara UNA vez, cuando el jugador de ESTA máquina se queda sin
+    // vidas. Lo escucha PlayerSlot para avisarles a las demás máquinas que su
+    // personaje ya está muerto -- si no, en la pantalla de los otros seguiría
+    // corriendo tan campante (bug reportado el 25/8).
+    public event System.Action GameOver;
+
     public void TriggerGameOver()
     {
         if (IsGameOver) return; // evita disparar dos veces si hay doble colisión en el mismo frame
         IsGameOver = true;
 
         if (DifficultyManager.Instance != null) DifficultyManager.Instance.Stop();
+
+        GameOver?.Invoke();
 
         float finalScore = ScoreManager.Instance != null ? ScoreManager.Instance.CurrentScore : 0f;
         Debug.Log($"[GameManager] GAME OVER. Puntaje final: {finalScore:0}");

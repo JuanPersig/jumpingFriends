@@ -85,6 +85,34 @@ public class CameraFollow : MonoBehaviour
         ResolveSettings();
     }
 
+    // El 'target' del Inspector está wireado a mano al slot 0. En una partida
+    // en red eso solo es correcto para uno de los jugadores, así que apenas
+    // se sabe cuál es TU carril, la cámara pasa a seguir ese. Sin red no
+    // llega nunca este aviso y queda el del Inspector, igual que siempre.
+    //
+    // Awake/OnDestroy y NO OnEnable/OnDisable a propósito: GameIntroSequence
+    // y GameOutroSequence apagan y prenden este componente a mano, y con
+    // OnDisable nos desuscribiríamos justo en medio de la partida.
+    private void Awake()
+    {
+        PlayerSlot.LocalSlotResolved += OnLocalSlotResolved;
+        if (PlayerSlot.Local != null) OnLocalSlotResolved(PlayerSlot.Local);
+    }
+
+    private void OnDestroy()
+    {
+        PlayerSlot.LocalSlotResolved -= OnLocalSlotResolved;
+    }
+
+    private void OnLocalSlotResolved(PlayerSlot slot)
+    {
+        if (slot == null) return;
+        target = slot.transform;
+        // initialized guarda la altura del target de antes; recalcularla con
+        // el carril nuevo evita un salto vertical si difieren.
+        initialized = false;
+    }
+
     // Null = sin tabla (o ninguna entrada utilizable) -> seguir target.x como siempre.
     private float? resolvedCenterX;
     private float lockedHeight;

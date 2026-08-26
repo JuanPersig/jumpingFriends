@@ -125,6 +125,13 @@ public class RunnerController : MonoBehaviour
         originalColliderCenterY = capsule.center.y;
         groundLocalY = transform.position.y;
 
+        // La rotación de corrida es el default de cualquier carril (ver
+        // Start()). Se deja seteada YA, en Awake, porque PlayerCharacterSpawner
+        // puede llamar a SetAnimator() antes de que corra nuestro Start() --
+        // el orden de Awake() entre componentes del mismo GameObject no está
+        // garantizado -- y ahí SetAnimator ya necesita saber qué re-aplicar.
+        currentModelYRotation = runningModelYRotation;
+
         // Z de arranque, capturada UNA vez. A partir de acá la posición en Z
         // es siempre startZ + distancia recorrida (ver Update) -- absoluta,
         // no acumulada. RoundLaneSetup solo toca la X, así que este valor
@@ -174,9 +181,39 @@ public class RunnerController : MonoBehaviour
     // los personajes del pack Quaternius comparten el mismo Animator
     // Controller (mismos nombres de estado), solo cambia A QUIÉN se le
     // aplica el CrossFade.
+    // La corrección de rotación se RE-APLICA acá (Fase 3.2, 25/8). Antes no
+    // hacía falta: había un solo swap, en Awake(), y Start() aplicaba la
+    // rotación de corrida encima del modelo ya definitivo.
+    //
+    // Con el multijugador cada carril swapea DOS veces -- el personaje local
+    // en Awake(), y el del dueño real del slot cuando llega por red (ver
+    // PlayerSlot). Ese segundo modelo nace después de Start(), así que nunca
+    // recibía la corrección y se quedaba con la rotación cruda del FBX.
+    // Síntoma reportado: el personaje del otro jugador se veía corriendo
+    // rotado en la pantalla del host.
+    //
+    // Se re-aplica el ÚLTIMO valor pedido, no runningModelYRotation fijo: si
+    // el swap cae mientras GameIntroSequence tiene puesta la pose de arranque
+    // (ApplyStartPoseRotation), pisarlo con la rotación de corrida rompería
+    // la intro.
     public void SetAnimator(Animator newAnimator)
     {
         animator = newAnimator;
+        SetModelYRotation(currentModelYRotation);
+
+        // También hay que re-aplicar la ANIMACIÓN, no solo la rotación: un
+        // modelo recién instanciado arranca en el estado por defecto de su
+        // Animator Controller (correr), así que un swap tardío pisaba la pose
+        // de arranque en cuclillas que ya se había puesto. Síntoma reportado
+        // el 25/8: el personaje del cliente empezaba parado mientras el del
+        // host esperaba agachado.
+        //
+        // Play() y no CrossFade: es un Animator nuevo, no hay nada de dónde
+        // mezclar, y queremos que quede en la pose YA.
+        if (animator != null && currentClipHash != 0)
+        {
+            animator.Play(currentClipHash, 0, 0f);
+        }
     }
 
     private void Start()
@@ -196,29 +233,19 @@ public class RunnerController : MonoBehaviour
         // ningún salto.
         ApplyRunningRotation();
 
-        // Se suscribe en Start(), no en OnEnable(): Unity garantiza que
-        // TODOS los Awake() de la escena (incluido el de PlayerInputProvider,
-        // que asigna Instance) corren antes que cualquier Start(). Con
-        // OnEnable() eso no está garantizado entre objetos distintos, y es
-        // justo lo que hacía que este script se suscribiera a veces y a
-        // veces no.
-        if (PlayerInputProvider.Instance == null)
-        {
-            Debug.LogError("[RunnerController] No se encontró PlayerInputProvider.Instance. " +
-                            "¿Existe ese componente en la escena?");
-            return;
-        }
-        PlayerInputProvider.Instance.OnJump += HandleJump;
-        PlayerInputProvider.Instance.OnCrouch += HandleCrouch;
-        PlayerInputProvider.Instance.OnStand += HandleStand;
-    }
-
-    private void OnDestroy()
-    {
-        if (PlayerInputProvider.Instance == null) return;
-        PlayerInputProvider.Instance.OnJump -= HandleJump;
-        PlayerInputProvider.Instance.OnCrouch -= HandleCrouch;
-        PlayerInputProvider.Instance.OnStand -= HandleStand;
+        // ESTE SCRIPT YA NO SE SUSCRIBE AL INPUT (Fase 3.3, 25/8). Antes cada
+        // RunnerController de la escena escuchaba el PlayerInputProvider
+        // global, así que un solo salto real movía a los CUATRO carriles a la
+        // vez -- perfecto para probar en local, imposible en red.
+        //
+        // Ahora quien decide es PlayerSlot: se suscribe solo en el carril que
+        // es TUYO, lo aplica al instante en tu pantalla, y manda el evento por
+        // red para que las demás máquinas lo reproduzcan sobre tu personaje
+        // (ver TriggerJump/TriggerCrouch/TriggerStand más abajo).
+        //
+        // Se mantiene la promesa del encabezado: este script sigue sin saber
+        // de dónde viene el input, ni que existe una red. Solo expone "hacé
+        // esto" y alguien más decide cuándo.
     }
 
     private void Update()
@@ -227,6 +254,8 @@ public class RunnerController : MonoBehaviour
         // Pausado hasta que termine la intro de cámara (ver GameIntroSequence).
         if (GameManager.Instance != null && !GameManager.Instance.HasGameplayStarted) return;
         if (DifficultyManager.Instance == null) return;
+        // Este carril ya murió en la máquina de su dueño -- ver Frozen.
+        if (Frozen) return;
 
         // Posición ABSOLUTA, no acumulada (Fase 3, 25/8): antes esto era
         // `position += forward * speed * deltaTime`, que va sumando el error
@@ -255,8 +284,40 @@ public class RunnerController : MonoBehaviour
     // a un GameObject inactivo ("Coroutine couldn't be started because the
     // game object is inactive").
     //
-    // Se desarma solo en la Fase 3.3, cuando cada RunnerController pase a
-    // escuchar el input únicamente si es el suyo (IsOwner).
+    // --- Disparadores públicos (los llama PlayerSlot) ---
+    //
+    // Son la única puerta de entrada a las acciones del personaje. Da igual
+    // si el evento nació de la cámara de este jugador o llegó por red desde
+    // otra máquina: de acá para adentro el comportamiento es idéntico, con
+    // todo lo fino que ya estaba resuelto (perdón de salto, agache encolado
+    // mientras estás en el aire, tiempo mínimo de asentado del agache).
+    public void TriggerJump() => HandleJump();
+    public void TriggerCrouch() => HandleCrouch();
+    public void TriggerStand() => HandleStand();
+
+    // ¿Los choques de ESTE carril le restan vidas al jugador de esta máquina?
+    //
+    // Arranca en true para que una escena sin PlayerSlot (Gameplay.unity
+    // abierta suelta) se comporte como siempre. En una partida en red lo
+    // maneja PlayerSlot: true solo en tu propio carril.
+    //
+    // Sin esto, los CUATRO RunnerController de cada máquina le reportaban al
+    // mismo GameManager global -- o sea que si el personaje del otro jugador
+    // chocaba, vos perdías la vida. Bug real reportado el 25/8.
+    //
+    // Cada cliente es autoritativo sobre sus PROPIOS choques (decisión
+    // tomada en plan-fase3-gameplay-en-red.md, sección 6): es el único que
+    // conoce el timing real de su input, y el perdón de salto depende de ese
+    // timing. No hay validación del servidor, a propósito.
+    public bool ReportsHits { get; set; } = true;
+
+    // Congela este carril donde está, sin tocar nada más. Lo usa PlayerSlot
+    // cuando el jugador de OTRA máquina se quedó sin vidas: acá su
+    // GameManager local no sabe nada de esa muerte (IsGameOver es false en
+    // esta máquina), así que sin esto su personaje seguiría corriendo para
+    // siempre en nuestra pantalla mientras en la suya ya está tirado.
+    public bool Frozen { get; set; }
+
     private void HandleJump()
     {
         if (!isActiveAndEnabled) return;
@@ -434,9 +495,16 @@ public class RunnerController : MonoBehaviour
     // el tiempo de mezcla (animationCrossFade) se respeta igual sin
     // importar cuán largo sea cada clip. Recibe el HASH precalculado
     // (ver Awake), no el string, para no rehashear en cada llamada.
+    // Última animación pedida, para poder re-aplicarla si el modelo se
+    // swapea (ver SetAnimator). 0 = ninguna todavía.
+    private int currentClipHash;
+
     private void PlayAnimation(int clipHash)
     {
-        if (animator == null || clipHash == 0) return;
+        if (clipHash == 0) return;
+        currentClipHash = clipHash;
+
+        if (animator == null) return;
         animator.CrossFadeInFixedTime(clipHash, animationCrossFade);
     }
 
@@ -503,8 +571,13 @@ public class RunnerController : MonoBehaviour
     // el Animator Controller (agregalo ahí si hace falta, Unity no lo crea solo).
     public void PlayCustomAnimation(string clipName)
     {
-        if (animator == null || string.IsNullOrEmpty(clipName)) return;
-        animator.CrossFadeInFixedTime(Animator.StringToHash(clipName), animationCrossFade);
+        if (string.IsNullOrEmpty(clipName)) return;
+        // Se recuerda igual que en PlayAnimation, para poder re-aplicarla si
+        // el modelo se swapea después (ver SetAnimator).
+        currentClipHash = Animator.StringToHash(clipName);
+
+        if (animator == null) return;
+        animator.CrossFadeInFixedTime(currentClipHash, animationCrossFade);
     }
 
     // Público para GameIntroSequence: vuelve a la animación de correr
@@ -537,8 +610,16 @@ public class RunnerController : MonoBehaviour
     // X/Z tal como estén. Fix puntual para compensar que el retargeting
     // Humanoid necesita un ajuste de orientación distinto según la
     // animación que esté sonando en ese momento.
+
+    // Última rotación pedida, para poder re-aplicarla si el modelo se swapea
+    // (ver SetAnimator). Arranca en la de corrida, que es el default de
+    // cualquier carril -- ver Start().
+    private float currentModelYRotation;
+
     private void SetModelYRotation(float yDegrees)
     {
+        currentModelYRotation = yDegrees;
+
         if (animator == null) return;
         Vector3 euler = animator.transform.localEulerAngles;
         euler.y = yDegrees;
@@ -593,6 +674,11 @@ public class RunnerController : MonoBehaviour
     private void OnTriggerEnter(Collider other)
     {
         if (!other.CompareTag("Obstacle")) return;
+
+        // Los choques del carril de OTRO jugador no son asunto de esta
+        // máquina: los cuenta su propio dueño, en su propia pantalla. Ver
+        // ReportsHits.
+        if (!ReportsHits) return;
 
         float progress01 = DifficultyManager.Instance != null ? DifficultyManager.Instance.Progress01 : 0f;
         float lowObstacleJumpGraceSeconds = Mathf.Lerp(lowObstacleJumpGraceSecondsEarly, lowObstacleJumpGraceSecondsLate, progress01);

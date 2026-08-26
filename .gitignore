@@ -81,3 +81,7 @@ Cliente/
 # (contenido vacio/por defecto, se recrean solos)
 Assets/Resources/PerformanceTestRunInfo.json*
 Assets/Resources/PerformanceTestRunSettings.json*
+
+# Backup de recuperacion que crea Unity sola tras un cierre inesperado
+# (se regenera; no es parte del proyecto)
+Assets/_Recovery/

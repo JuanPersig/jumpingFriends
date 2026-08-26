@@ -5245,7 +5245,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::MultiplayerConnectionManager
   maxPlayers: 4
   debugJoinCode: 
-  debugAuthProfile: Cliente
+  debugAuthProfile: Host
 --- !u!114 &848451516
 MonoBehaviour:
   m_ObjectHideFlags: 0

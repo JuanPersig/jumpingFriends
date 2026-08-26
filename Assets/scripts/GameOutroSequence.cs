@@ -53,6 +53,44 @@ public class GameOutroSequence : MonoBehaviour
     // IsGameOver == true en todos los frames siguientes.
     private bool hasPlayed;
 
+    // 'player' y 'deathCameraAnchor' están wireados a mano al slot 0. En una
+    // partida en red eso hacía que la animación de muerte se reprodujera
+    // SIEMPRE sobre el personaje del host, sin importar quién muriera de
+    // verdad (bug reportado el 25/8: moría el cliente y la caída la hacía el
+    // personaje del host). Apenas se sabe cuál es TU carril, los dos pasan a
+    // apuntar ahí.
+    //
+    // Sin red este aviso no llega nunca y queda lo del Inspector, que es
+    // exactamente el comportamiento de siempre.
+    private void Awake()
+    {
+        PlayerSlot.LocalSlotResolved += OnLocalSlotResolved;
+        if (PlayerSlot.Local != null) OnLocalSlotResolved(PlayerSlot.Local);
+    }
+
+    private void OnDestroy()
+    {
+        PlayerSlot.LocalSlotResolved -= OnLocalSlotResolved;
+    }
+
+    private void OnLocalSlotResolved(PlayerSlot slot)
+    {
+        if (slot == null) return;
+
+        if (slot.Runner != null) player = slot.Runner;
+
+        if (slot.DeathCameraAnchor != null)
+        {
+            deathCameraAnchor = slot.DeathCameraAnchor;
+        }
+        else
+        {
+            Debug.LogWarning($"[GameOutroSequence] El slot {slot.SlotIndex} no tiene wireado su " +
+                              "Death Camera Anchor -- la cámara de muerte va a viajar al del " +
+                              "Inspector, que puede ser el de otro jugador.");
+        }
+    }
+
     private void Update()
     {
         if (hasPlayed) return;

@@ -768,6 +768,7 @@ GameObject:
   - component: {fileID: 230710473}
   - component: {fileID: 230710472}
   - component: {fileID: 230710478}
+  - component: {fileID: 230710479}
   m_Layer: 0
   m_Name: player2
   m_TagString: Untagged
@@ -991,6 +992,20 @@ MonoBehaviour:
   AutoObjectParentSync: 1
   SyncOwnerTransformWhenParented: 1
   AllowOwnerToParent: 0
+--- !u!114 &230710479
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 230710470}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0b856f6601b7fda47baf3eb669e0de24, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerSlot
+  ShowTopMostFoldoutHeaderGroup: 1
+  slotIndex: 1
 --- !u!1 &277035859
 GameObject:
   m_ObjectHideFlags: 0
@@ -1693,6 +1708,7 @@ GameObject:
   - component: {fileID: 478743087}
   - component: {fileID: 478743086}
   - component: {fileID: 478743092}
+  - component: {fileID: 478743093}
   m_Layer: 0
   m_Name: player4
   m_TagString: Untagged
@@ -1916,6 +1932,20 @@ MonoBehaviour:
   AutoObjectParentSync: 1
   SyncOwnerTransformWhenParented: 1
   AllowOwnerToParent: 0
+--- !u!114 &478743093
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 478743084}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0b856f6601b7fda47baf3eb669e0de24, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerSlot
+  ShowTopMostFoldoutHeaderGroup: 1
+  slotIndex: 3
 --- !u!1 &633697619
 GameObject:
   m_ObjectHideFlags: 0
@@ -2069,6 +2099,7 @@ GameObject:
   - component: {fileID: 640943988}
   - component: {fileID: 640943993}
   - component: {fileID: 640943994}
+  - component: {fileID: 640943995}
   m_Layer: 0
   m_Name: player
   m_TagString: Untagged
@@ -2292,6 +2323,20 @@ MonoBehaviour:
   AutoObjectParentSync: 1
   SyncOwnerTransformWhenParented: 1
   AllowOwnerToParent: 0
+--- !u!114 &640943995
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 640943986}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0b856f6601b7fda47baf3eb669e0de24, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerSlot
+  ShowTopMostFoldoutHeaderGroup: 1
+  slotIndex: 0
 --- !u!1 &711223467
 GameObject:
   m_ObjectHideFlags: 0
@@ -2641,7 +2686,6 @@ MonoBehaviour:
     - 17.7
     - 21.7
   obstacleSpawner: {fileID: 32838741}
-  roundPlayerCount: 1
   localPlayerSlotIndex: 0
   cameraFollow: {fileID: 1227996052}
 --- !u!1 &956763899
@@ -3016,6 +3060,7 @@ GameObject:
   - component: {fileID: 1196689080}
   - component: {fileID: 1196689079}
   - component: {fileID: 1196689085}
+  - component: {fileID: 1196689086}
   m_Layer: 0
   m_Name: player3
   m_TagString: Untagged
@@ -3239,6 +3284,20 @@ MonoBehaviour:
   AutoObjectParentSync: 1
   SyncOwnerTransformWhenParented: 1
   AllowOwnerToParent: 0
+--- !u!114 &1196689086
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1196689077}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0b856f6601b7fda47baf3eb669e0de24, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerSlot
+  ShowTopMostFoldoutHeaderGroup: 1
+  slotIndex: 2
 --- !u!1 &1227996050
 GameObject:
   m_ObjectHideFlags: 0
@@ -3442,7 +3501,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::NetworkRoundState
   ShowTopMostFoldoutHeaderGroup: 1
-  startDelaySeconds: 7
+  startDelaySeconds: 10
 --- !u!1 &1253404554
 GameObject:
   m_ObjectHideFlags: 0
