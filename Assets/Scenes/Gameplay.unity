@@ -1006,6 +1006,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerSlot
   ShowTopMostFoldoutHeaderGroup: 1
   slotIndex: 1
+  deathCameraAnchor: {fileID: 813315107}
+  deathClipName: Death01
 --- !u!1 &277035859
 GameObject:
   m_ObjectHideFlags: 0
@@ -1946,6 +1948,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerSlot
   ShowTopMostFoldoutHeaderGroup: 1
   slotIndex: 3
+  deathCameraAnchor: {fileID: 956763900}
+  deathClipName: Death01
 --- !u!1 &633697619
 GameObject:
   m_ObjectHideFlags: 0
@@ -2337,6 +2341,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerSlot
   ShowTopMostFoldoutHeaderGroup: 1
   slotIndex: 0
+  deathCameraAnchor: {fileID: 1532929607}
+  deathClipName: Death01
 --- !u!1 &711223467
 GameObject:
   m_ObjectHideFlags: 0
@@ -3298,6 +3304,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerSlot
   ShowTopMostFoldoutHeaderGroup: 1
   slotIndex: 2
+  deathCameraAnchor: {fileID: 1578390910}
+  deathClipName: Death01
 --- !u!1 &1227996050
 GameObject:
   m_ObjectHideFlags: 0
