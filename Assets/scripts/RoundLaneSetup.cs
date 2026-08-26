@@ -87,16 +87,41 @@ public class RoundLaneSetup : MonoBehaviour
 
     private IEnumerator SetupWhenRoundStateReady()
     {
+        // UN FRAME DE MARGEN, Y NO ES OPCIONAL (bug real, 25/8). Las
+        // corrutinas empiezan a correr sincrónicamente en el mismo Awake()
+        // que las lanza, y el orden de Awake() entre GameObjects distintos NO
+        // está garantizado -- así que acá NetworkRoundState.Instance puede
+        // todavía ser null aunque el objeto esté perfecto en la escena.
+        //
+        // La primera version de esto guardaba Instance en una variable local
+        // ANTES de este yield: quedaba en null, la espera de abajo no se
+        // ejecutaba nunca, y la ronda se armaba al instante con el respaldo
+        // de 1 jugador. Sintoma: arena de 2 jugadores (ChunkSpawner si
+        // esperaba bien, porque arranca desde Start()) pero un solo carril.
+        //
+        // Con este yield ya pasaron TODOS los Awake() y Start() de la escena,
+        // asi que si Instance sigue en null es porque el objeto realmente no
+        // esta, no porque no le toco arrancar todavia.
+        yield return null;
+
         NetworkRoundState round = NetworkRoundState.Instance;
+        if (round == null)
+        {
+            Debug.LogError("[RoundLaneSetup] No hay ningún NetworkRoundState en la escena -- " +
+                            "armando la ronda con el valor de respaldo de GameManager. En " +
+                            "multijugador los carriles no van a coincidir con los de los demás.");
+            SetupRound();
+            yield break;
+        }
 
         float waited = 0f;
-        while (round != null && !round.IsResolved && waited < RoundStateWaitTimeoutSeconds)
+        while (!round.IsResolved && waited < RoundStateWaitTimeoutSeconds)
         {
             waited += Time.deltaTime;
             yield return null;
         }
 
-        if (round != null && !round.IsResolved)
+        if (!round.IsResolved)
         {
             Debug.LogWarning($"[RoundLaneSetup] El estado de ronda no llegó en " +
                               $"{RoundStateWaitTimeoutSeconds}s -- armando la ronda con el valor de " +

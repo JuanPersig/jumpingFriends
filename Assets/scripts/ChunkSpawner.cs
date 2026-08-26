@@ -202,6 +202,14 @@ public class ChunkSpawner : MonoBehaviour
 
     private IEnumerator WaitForSeed()
     {
+        // Un frame de margen antes de mirar Instance -- ver el comentario
+        // grande en RoundLaneSetup.SetupWhenRoundStateReady(). Acá hoy no
+        // haría falta (esta corrutina arranca desde Start(), y para entonces
+        // todos los Awake() ya corrieron), pero se deja igual: si alguna vez
+        // esto se llama desde un Awake(), sin el yield vuelve el mismo bug
+        // de "no espera nada y usa el respaldo".
+        yield return null;
+
         NetworkRoundState round = NetworkRoundState.Instance;
 
         float waited = 0f;
