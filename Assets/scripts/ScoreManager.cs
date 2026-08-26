@@ -11,11 +11,32 @@ using UnityEngine;
 // gratis -- algo que va a hacer falta sí o sí cuando exista la pantalla de
 // resultados/podio (ver multiplayer-plan.md, sección 7).
 //
-// DifficultyManager.Stop() (que dispara GameManager.TriggerGameOver) congela
-// la distancia, así que el puntaje también queda clavado al morir sin que
-// haga falta chequear IsGameOver acá.
+// SE CONGELA AL MORIR, a mano (Fase 3.5, 26/8). Antes alcanzaba con que
+// GameManager frenara el DifficultyManager al perder, y el puntaje quedaba
+// clavado solo. Ahora ese reloj sigue corriendo mientras los rivales siguen
+// jugando -- si no snapshotearamos acá, tu puntaje seguiría subiendo mientras
+// mirás la partida de espectador, ya muerto.
 public class ScoreManager : Singleton<ScoreManager>
 {
+    // null = seguís vivo, el puntaje se lee en vivo de la distancia.
+    private float? scoreAtDeath;
+
     public float CurrentScore =>
-        DifficultyManager.Instance != null ? DifficultyManager.Instance.DistanceTravelled : 0f;
+        scoreAtDeath ?? (DifficultyManager.Instance != null ? DifficultyManager.Instance.DistanceTravelled : 0f);
+
+    private void Start()
+    {
+        if (GameManager.Instance != null) GameManager.Instance.GameOver += FreezeScore;
+    }
+
+    private void OnDestroy()
+    {
+        if (GameManager.Instance != null) GameManager.Instance.GameOver -= FreezeScore;
+    }
+
+    private void FreezeScore()
+    {
+        if (scoreAtDeath.HasValue) return;
+        scoreAtDeath = DifficultyManager.Instance != null ? DifficultyManager.Instance.DistanceTravelled : 0f;
+    }
 }

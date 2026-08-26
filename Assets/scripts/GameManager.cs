@@ -97,20 +97,46 @@ public class GameManager : Singleton<GameManager>
     // corriendo tan campante (bug reportado el 25/8).
     public event System.Action GameOver;
 
+    // ¿Terminó la RONDA (no solo tu partida)? Con varios jugadores, que vos
+    // te quedes sin vidas no termina nada: pasás a espectador y el mundo
+    // sigue. La ronda termina recién cuando queda uno en pie, y eso lo decide
+    // el servidor (ver NetworkRoundState / PlayerSlot).
+    public bool IsRoundOver { get; private set; }
+    public event System.Action RoundOver;
+
     public void TriggerGameOver()
     {
         if (IsGameOver) return; // evita disparar dos veces si hay doble colisión en el mismo frame
         IsGameOver = true;
 
-        if (DifficultyManager.Instance != null) DifficultyManager.Instance.Stop();
-
+        // OJO: acá YA NO se frena el DifficultyManager (Fase 3.5, 26/8). Ese
+        // es el reloj compartido de TODA la simulación, así que pararlo
+        // congelaba también a los rivales -- en tu pantalla los veías correr
+        // en el lugar mientras en la suya seguían avanzando. Ahora lo frena
+        // TriggerRoundOver, que corre cuando la ronda termina de verdad.
         GameOver?.Invoke();
 
         float finalScore = ScoreManager.Instance != null ? ScoreManager.Instance.CurrentScore : 0f;
         Debug.Log($"[GameManager] GAME OVER. Puntaje final: {finalScore:0}");
 
-        // Placeholder: acá conectamos la UI real de Game Over más adelante
-        // (Fase 4, cuando armemos el sistema de menús reutilizable).
+        // Sin red no hay a quién esperar: tu muerte ES el fin de la ronda.
+        // Con red, la decide el servidor cuando queda uno en pie.
+        bool networked = NetworkRoundState.Instance != null && NetworkRoundState.Instance.IsNetworked;
+        if (!networked) TriggerRoundOver();
+    }
+
+    // Lo llama NetworkRoundState cuando el servidor declara terminada la
+    // ronda (o TriggerGameOver, sin red). Acá SÍ se frena el reloj
+    // compartido: ya no queda nadie corriendo a quien congelar de más.
+    public void TriggerRoundOver()
+    {
+        if (IsRoundOver) return;
+        IsRoundOver = true;
+
+        if (DifficultyManager.Instance != null) DifficultyManager.Instance.Stop();
+
+        Debug.Log("[GameManager] Fin de ronda.");
+        RoundOver?.Invoke();
     }
 
     public void RestartGame()

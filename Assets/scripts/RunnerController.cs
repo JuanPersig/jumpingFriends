@@ -250,11 +250,16 @@ public class RunnerController : MonoBehaviour
 
     private void Update()
     {
-        if (GameManager.Instance != null && GameManager.Instance.IsGameOver) return;
         // Pausado hasta que termine la intro de cámara (ver GameIntroSequence).
         if (GameManager.Instance != null && !GameManager.Instance.HasGameplayStarted) return;
         if (DifficultyManager.Instance == null) return;
-        // Este carril ya murió en la máquina de su dueño -- ver Frozen.
+
+        // Quién se detiene lo decide Frozen, POR CARRIL -- ya no el
+        // IsGameOver global (Fase 3.5, 26/8). Ese chequeo global paraba a los
+        // CUATRO carriles apenas moría el jugador de esta máquina, así que
+        // los rivales se veían corriendo en el lugar mientras en sus
+        // pantallas seguían avanzando. PlayerSlot congela cada carril cuando
+        // muere su propio dueño, sea local o remoto.
         if (Frozen) return;
 
         // Posición ABSOLUTA, no acumulada (Fase 3, 25/8): antes esto era
@@ -322,12 +327,13 @@ public class RunnerController : MonoBehaviour
     {
         if (!isActiveAndEnabled) return;
 
-        // Una vez terminado el juego, ignoramos cualquier salto/agache/
+        // Una vez muerto ESTE carril, ignoramos cualquier salto/agache/
         // parado que siga llegando de la detección real -- sin esto, el
-        // "cadáver" de GameOutroSequence podía seguir reaccionando a que
-        // te muevas de verdad frente a la cámara mientras se reproduce
-        // Death01, arruinando la pose.
-        if (GameManager.Instance != null && GameManager.Instance.IsGameOver) return;
+        // "cadáver" podía seguir reaccionando a que te muevas de verdad
+        // frente a la cámara mientras se reproduce Death01, arruinando la
+        // pose. Ahora se mira Frozen (por carril) y no el IsGameOver global:
+        // que TE hayas muerto no tiene por qué callar a los rivales.
+        if (Frozen) return;
 
         // Mismo criterio durante la pantalla de carga / paneo de cámara de
         // arranque (ver GameIntroSequence): si el jugador salta de verdad
@@ -394,7 +400,7 @@ public class RunnerController : MonoBehaviour
     private void HandleCrouch()
     {
         if (!isActiveAndEnabled) return; // carril apagado, ver comentario en HandleJump
-        if (GameManager.Instance != null && GameManager.Instance.IsGameOver) return;
+        if (Frozen) return;              // este carril ya murio
         // Ver comentario grande en HandleJump -- mismo criterio durante la
         // pantalla de carga / paneo de cámara de arranque.
         if (GameManager.Instance != null && !GameManager.Instance.HasGameplayStarted) return;
@@ -421,7 +427,7 @@ public class RunnerController : MonoBehaviour
     private void HandleStand()
     {
         if (!isActiveAndEnabled) return; // carril apagado, ver comentario en HandleJump
-        if (GameManager.Instance != null && GameManager.Instance.IsGameOver) return;
+        if (Frozen) return;              // este carril ya murio
         // Ver comentario grande en HandleJump -- mismo criterio durante la
         // pantalla de carga / paneo de cámara de arranque.
         if (GameManager.Instance != null && !GameManager.Instance.HasGameplayStarted) return;

@@ -93,11 +93,38 @@ public class GameOutroSequence : MonoBehaviour
 
     private void Update()
     {
-        if (hasPlayed) return;
-        if (GameManager.Instance == null || !GameManager.Instance.IsGameOver) return;
+        if (hasPlayed || GameManager.Instance == null) return;
 
-        hasPlayed = true;
-        StartCoroutine(PlayOutro());
+        // Moriste: cinemática de caída y, si la ronda sigue, modo espectador.
+        if (GameManager.Instance.IsGameOver)
+        {
+            hasPlayed = true;
+            StartCoroutine(PlayOutro());
+            return;
+        }
+
+        // La ronda terminó y vos seguís vivo: nunca pasás por la cinemática
+        // de muerte, así que hay que mostrarte el resultado igual.
+        //
+        // Con la regla actual (la ronda termina cuando mueren TODOS) esto no
+        // debería pasar nunca -- se llega acá solo si la ronda se corta por
+        // otro motivo, como que se desconecten los demás. Se deja como red de
+        // seguridad: sin esto, ese jugador se quedaría corriendo para siempre
+        // sin ver ningún resultado.
+        if (GameManager.Instance.IsRoundOver)
+        {
+            hasPlayed = true;
+            StartCoroutine(ShowResultWithoutDying());
+        }
+    }
+
+    private IEnumerator ShowResultWithoutDying()
+    {
+        // Se sostiene un momento la escena antes del panel, mismo criterio
+        // que la muerte: que se vea que la partida terminó antes de tapar
+        // todo con UI.
+        yield return new WaitForSeconds(holdBeforeGameOverPanelSeconds);
+        uiManager?.ShowGameOverPanel();
     }
 
     private IEnumerator PlayOutro()
@@ -136,10 +163,32 @@ public class GameOutroSequence : MonoBehaviour
 
         yield return new WaitForSeconds(holdBeforeGameOverPanelSeconds);
 
-        // A propósito NO se vuelve a prender cameraFollow -- la partida ya
+        // MODO ESPECTADOR (Fase 3.5, 26/8). Antes acá terminaba todo: se
+        // mostraba el panel de Game Over y la cámara se quedaba clavada sobre
+        // el cadáver. Con varios jugadores eso está mal: que VOS pierdas no
+        // termina la ronda, así que en vez de cerrar la partida pasás a mirar
+        // a alguien que siga vivo, hasta que quede uno solo en pie.
+        if (!GameManager.Instance.IsRoundOver)
+        {
+            PlayerSlot rival = PlayerSlot.FirstAliveOther(PlayerSlot.Local);
+            if (rival != null && cameraFollow != null)
+            {
+                cameraFollow.SpectateTarget(rival.transform);
+                Debug.Log($"[GameOutroSequence] Modo espectador: siguiendo al slot {rival.SlotIndex}.");
+            }
+
+            // Esperamos el fin de ronda de verdad antes de mostrar nada.
+            while (!GameManager.Instance.IsRoundOver)
+            {
+                yield return null;
+            }
+        }
+
+        // A propósito NO se vuelve a prender cameraFollow acá -- la ronda ya
         // terminó, no hay a qué "volver a seguir". Si en algún momento se
         // agrega un botón de Reiniciar que recarga la escena
         // (GameManager.RestartGame ya existe), todo esto se resetea solo.
+        if (cameraFollow != null) cameraFollow.enabled = false;
         uiManager?.ShowGameOverPanel();
     }
 }

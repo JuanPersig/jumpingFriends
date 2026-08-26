@@ -86,9 +86,17 @@ public class MultiplayerConnectionManager : MonoBehaviour
         // excepción si ya estás firmado) -- por eso va acá, apenas
         // terminó InitializeAsync y antes de tocar IsSignedIn/SignIn. Ver
         // el comentario grande en debugAuthProfile para el porqué.
-        if (!string.IsNullOrEmpty(debugAuthProfile))
+        // Trim() no es cosmético: el servicio solo acepta alfanuméricos, '-'
+        // y '_', así que un espacio invisible al final del campo del
+        // Inspector tira "Invalid profile name" y deja el build sin poder
+        // crear NI unirse a ninguna sala. Pasó de verdad el 26/8 con
+        // 'Host ' -- costó un build entero darse cuenta, porque el espacio no
+        // se ve en el Inspector y el error no dice cuál es el nombre que
+        // molesta.
+        string profile = debugAuthProfile != null ? debugAuthProfile.Trim() : "";
+        if (!string.IsNullOrEmpty(profile))
         {
-            AuthenticationService.Instance.SwitchProfile(debugAuthProfile);
+            AuthenticationService.Instance.SwitchProfile(profile);
         }
 
         if (!AuthenticationService.Instance.IsSignedIn)

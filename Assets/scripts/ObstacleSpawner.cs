@@ -292,7 +292,11 @@ public class ObstacleSpawner : MonoBehaviour
         // spawnear (ni desde dónde medir el progreso en Z). Ver Initialize().
         if (!isInitialized) return;
 
-        if (GameManager.Instance != null && GameManager.Instance.IsGameOver) return;
+        // IsRoundOver y no IsGameOver (Fase 3.5, 26/8): que VOS te hayas
+        // muerto no corta la ronda -- los demás siguen corriendo y necesitan
+        // que les sigan apareciendo obstáculos, también en tu pantalla
+        // mientras los mirás de espectador.
+        if (GameManager.Instance != null && GameManager.Instance.IsRoundOver) return;
         // Pausado hasta que termine la intro de cámara (ver GameIntroSequence).
         if (GameManager.Instance != null && !GameManager.Instance.HasGameplayStarted) return;
 

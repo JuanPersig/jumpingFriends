@@ -89,6 +89,62 @@ public class GameIntroSequence : MonoBehaviour
     //
     // Se busca UNA sola vez -- los 4 slots están puestos a mano en la escena
     // y nunca se crean ni se destruyen (ver PlayerSlotAssigner).
+    // La intro arranca detrás de TU personaje, no siempre del carril 0
+    // (Fase 3.5, 26/8). IntroCameraStart/End son objetos sueltos de la
+    // escena, encuadrados a mano sobre el carril 0 -- así que en red los dos
+    // jugadores veían la misma intro, apuntando al personaje del host.
+    //
+    // Como los carriles solo difieren en X, alcanza con correr AMBOS puntos
+    // por esa diferencia.
+    //
+    // Al principio se corría solo el de arranque, pensando que dejar el final
+    // fijo evitaría un salto en el traspaso a CameraFollow. Salió mal: la
+    // panorámica arrancaba bien encuadrada sobre tu carril pero después
+    // viajaba varias unidades hacia el lado del carril 0, o sea que la intro
+    // te terminaba mostrando el personaje del host (reportado el 26/8).
+    // Corriendo los dos, la intro entera queda sobre TU carril y el traspaso
+    // final es exactamente el mismo que ya tenía el host de siempre.
+    //
+    // Se hace acá y no antes porque RoundLaneSetup reposiciona los carriles
+    // cuando llega el estado de red: hasta ese momento las X no son las
+    // definitivas. Igual sigue estando todo tapado por la pantalla negra.
+    private bool laneFramed;
+
+    private void FrameLocalLane()
+    {
+        if (laneFramed) return;
+
+        PlayerSlot local = PlayerSlot.Local;
+        if (local == null || introCameraStart == null) return;
+
+        // El carril de referencia para el que se encuadró la cámara a mano.
+        PlayerSlot reference = null;
+        foreach (PlayerSlot slot in PlayerSlot.All)
+        {
+            if (slot != null && slot.SlotIndex == 0) { reference = slot; break; }
+        }
+        if (reference == null || reference == local) return; // ya está bien encuadrada
+
+        laneFramed = true;
+
+        float offsetX = local.transform.position.x - reference.transform.position.x;
+        Vector3 laneOffset = new Vector3(offsetX, 0f, 0f);
+
+        introCameraStart.position += laneOffset;
+        if (introCameraEnd != null) introCameraEnd.position += laneOffset;
+
+        // Re-encuadrar YA: ApplyStartPose() dejó la cámara en la posición
+        // vieja hace rato. Todavía estamos en negro, así que no se ve saltar.
+        if (cameraFollow != null)
+        {
+            cameraFollow.transform.SetPositionAndRotation(
+                introCameraStart.position, introCameraStart.rotation);
+        }
+
+        Debug.Log($"[GameIntroSequence] Intro encuadrada sobre el carril {local.SlotIndex} " +
+                  $"(offset X {offsetX:0.00}).");
+    }
+
     private RunnerController[] cachedRunners;
 
     private RunnerController[] AllRunners()
@@ -146,6 +202,8 @@ public class GameIntroSequence : MonoBehaviour
 
     private IEnumerator PlayIntro()
     {
+        FrameLocalLane();
+
         Transform cam = cameraFollow != null ? cameraFollow.transform : null;
 
         // Compartido con GameOutroSequence.PlayOutro (ver CameraLerpUtility) --

@@ -33,11 +33,50 @@ public class NetworkRoundState : NetworkBehaviour
     private readonly NetworkVariable<int> obstacleSeed = new NetworkVariable<int>(0);
     private readonly NetworkVariable<int> playerCount = new NetworkVariable<int>(1);
 
+    // Quién ganó, por índice de carril. -1 = todavía no se sabe.
+    //
+    // Es el que llegó MÁS LEJOS, que en este juego es exactamente el que
+    // aguantó más: todos corren la misma pista a la misma velocidad, así que
+    // "el último en morir" y "el que más distancia hizo" son el mismo
+    // jugador. Por eso alcanza con anotar quién cayó último, sin comparar
+    // puntajes.
+    //
+    // OJO CON EL ORDEN: esta va declarada ANTES que roundOver a propósito.
+    // Netcode aplica las NetworkVariable en el orden en que están declaradas
+    // en la clase, y quien reacciona al fin de ronda lee el ganador. Si
+    // roundOver se aplicara primero, su OnValueChanged saldría con el ganador
+    // todavía en -1 y nadie festejaría.
+    private readonly NetworkVariable<int> winnerSlot = new NetworkVariable<int>(-1);
+
+    // ¿Ya terminó la ronda? La decide el SERVIDOR cuando no queda nadie en
+    // pie (ver PlayerSlot.EvaluateRoundEnd). Es distinto de "yo me morí": el
+    // que pierde primero pasa a espectador y el mundo sigue para los demás.
+    private readonly NetworkVariable<bool> roundOver = new NetworkVariable<bool>(false);
+
+    public bool IsRoundOver => roundOver.Value;
+    public int WinnerSlotIndex => winnerSlot.Value;
+
+    // Público para PlayerSlot, que es quien lleva la cuenta de vivos. Solo
+    // corre en el servidor: los clientes se enteran por las NetworkVariable.
+    public void DeclareRoundOver(int winnerSlotIndex)
+    {
+        if (!IsServer || roundOver.Value) return;
+
+        winnerSlot.Value = winnerSlotIndex;
+        roundOver.Value = true;
+        Debug.Log($"[NetworkRoundState] Ronda terminada. Ganó el carril {winnerSlotIndex} " +
+                  "(el que llegó más lejos).");
+    }
+
     // Valores de respaldo para el modo sin red (ver comentario de arriba).
     private double offlineStartTime = -1.0;
     private int offlineSeed;
 
-    private bool IsNetworked =>
+    // Público: varios sistemas necesitan distinguir "partida en red" de
+    // "Gameplay.unity abierta suelta desde el Editor" para elegir el camino
+    // correcto (ej. si al morir el jugador local se termina la ronda de una,
+    // o si hay que esperar a que caigan los demás).
+    public bool IsNetworked =>
         NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
 
     // Reloj compartido. Con red es el tiempo de servidor (los clientes lo
@@ -121,12 +160,19 @@ public class NetworkRoundState : NetworkBehaviour
         // además se engancha al cambio.
         LogResolvedStateOnce();
         gameplayStartTime.OnValueChanged += OnStartTimeReplicated;
+        roundOver.OnValueChanged += OnRoundOverReplicated;
     }
 
     public override void OnNetworkDespawn()
     {
         gameplayStartTime.OnValueChanged -= OnStartTimeReplicated;
+        roundOver.OnValueChanged -= OnRoundOverReplicated;
         base.OnNetworkDespawn();
+    }
+
+    private void OnRoundOverReplicated(bool previous, bool current)
+    {
+        if (current) GameManager.Instance?.TriggerRoundOver();
     }
 
     private void OnStartTimeReplicated(double previous, double current)

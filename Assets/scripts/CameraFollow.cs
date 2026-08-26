@@ -113,6 +113,22 @@ public class CameraFollow : MonoBehaviour
         initialized = false;
     }
 
+    // Público para GameOutroSequence: pasar a mirar a un rival vivo después
+    // de que te eliminaron. Vuelve a prender el componente porque la
+    // cinemática de muerte lo había apagado para mover la cámara a mano.
+    //
+    // No hace falta tocar 'resolvedCenterX': con dos o más carriles la cámara
+    // ya se queda en el centro de la arena y solo sigue el avance en Z, así
+    // que mirar a un rival es simplemente seguir SU Z.
+    public void SpectateTarget(Transform newTarget)
+    {
+        if (newTarget == null) return;
+
+        target = newTarget;
+        initialized = false;
+        enabled = true;
+    }
+
     // Null = sin tabla (o ninguna entrada utilizable) -> seguir target.x como siempre.
     private float? resolvedCenterX;
     private float lockedHeight;

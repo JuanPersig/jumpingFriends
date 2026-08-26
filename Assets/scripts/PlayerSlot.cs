@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -40,6 +41,9 @@ public class PlayerSlot : NetworkBehaviour
              "de GameOutroSequence -- se usa cuando este carril muere en OTRA máquina y hay que " +
              "reproducir su caída acá.")]
     [SerializeField] private string deathClipName = "Death01";
+
+    // (Acá vivían Victory Clip Name y Victory Delay Seconds, sacados el 26/8
+    // junto con la animación de festejo -- ver OnRoundOver.)
 
     public int SlotIndex => slotIndex;
     public Transform DeathCameraAnchor => deathCameraAnchor;
@@ -99,6 +103,8 @@ public class PlayerSlot : NetworkBehaviour
 
     private void Awake()
     {
+        if (!all.Contains(this)) all.Add(this);
+
         characterSpawner = GetComponent<PlayerCharacterSpawner>();
         runner = GetComponent<RunnerController>();
 
@@ -126,16 +132,102 @@ public class PlayerSlot : NetworkBehaviour
     // manejando GameOutroSequence, como siempre.
     private void OnLocalGameOver()
     {
-        if (!IsMine || !IsSpawned) return;
-        dead.Value = true;
+        // Vale tanto para la partida en red (mi carril) como para la escena
+        // suelta (slot 0). Congelar acá es lo que reemplaza al viejo chequeo
+        // global de IsGameOver que tenía RunnerController.Update().
+        bool mine = IsSpawned ? IsMine : slotIndex == 0;
+        if (!mine) return;
+
+        if (runner != null) runner.Frozen = true;
+        if (IsSpawned) dead.Value = true;
+    }
+
+    // Fin de ronda: nadie se mueve más, y el ganador festeja.
+    //
+    // El freeze acá es lo que corta el input del que TODAVÍA no había muerto
+    // (bug reportado el 26/8: al terminar la ronda el host seguía respondiendo
+    // a saltos y agachadas). RunnerController mira Frozen por carril, y hasta
+    // ahora solo se ponía al morir cada uno.
+    // Al terminar la ronda no se mueve más nadie. Este freeze es lo que corta
+    // el input del que TODAVÍA no había muerto (bug del 26/8: al terminar la
+    // ronda el host seguía respondiendo a saltos y agachadas) --
+    // RunnerController mira Frozen por carril, y hasta ahora solo se ponía
+    // cuando moría cada uno.
+    //
+    // Acá vivía una animación de festejo para el ganador (Dance_Loop). Se
+    // sacó el 26/8 porque no quedaba bien: la ronda termina cuando cae el
+    // último, así que el ganador venía de reproducir su propia caída y tenía
+    // que levantarse del piso para bailar. Quién ganó SÍ se sigue calculando
+    // y replicando (NetworkRoundState.WinnerSlotIndex) para la pantalla de
+    // resultados.
+    private void OnRoundOver()
+    {
+        if (runner != null) runner.Frozen = true;
+    }
+
+    // --- Cuántos siguen en pie (solo le importa al servidor) ---
+
+    // Todos los slots vivos de la escena. Lista estática porque los 4 están
+    // puestos a mano y nunca se crean ni se destruyen (ver PlayerSlotAssigner).
+    private static readonly List<PlayerSlot> all = new List<PlayerSlot>();
+    public static IReadOnlyList<PlayerSlot> All => all;
+
+    public bool IsAssigned => assigned.Value;
+
+    // El primer rival con vida distinto de este slot, o null si no queda
+    // ninguno. Lo usa GameOutroSequence para elegir a quién mirar cuando
+    // pasás a espectador. Por orden de carril, que es el criterio simple ya
+    // acordado en multiplayer-plan.md (elegir a mano queda para más adelante).
+    public static PlayerSlot FirstAliveOther(PlayerSlot except)
+    {
+        foreach (PlayerSlot slot in all)
+        {
+            if (slot == null || slot == except) continue;
+            if (!slot.IsAssigned || slot.IsDead) continue;
+            return slot;
+        }
+        return null;
+    }
+
+    // Cuando muere alguien, el servidor mira si queda alguien en pie. Los
+    // clientes no deciden nada: se enteran por NetworkRoundState.
+    //
+    // LA RONDA TERMINA CUANDO MUEREN TODOS (decidido 26/8), no cuando queda
+    // uno. Se evaluó "último en pie" -- era la regla original del 20/8 -- y
+    // se cambió porque en ESTE juego no altera quién gana: todos corren la
+    // misma pista a la misma velocidad, así que el que sobrevive más es el
+    // que llega más lejos, y son la misma persona. Lo que sí cambiaba era la
+    // experiencia: con 2 jugadores la primera muerte cortaba la carrera del
+    // otro de golpe, y el modo espectador no llegaba a verse nunca.
+    //
+    // Con esta regla cada uno completa su propia carrera, el espectador tiene
+    // sentido, y los dos ven el resultado con distancias comparables.
+    private void EvaluateRoundEnd()
+    {
+        if (!IsServer) return;
+
+        int alive = 0;
+        foreach (PlayerSlot slot in all)
+        {
+            if (slot != null && slot.IsAssigned && !slot.IsDead) alive++;
+        }
+
+        if (alive > 0 || NetworkRoundState.Instance == null) return;
+
+        // El último en caer es el que más aguantó, o sea el ganador. Como
+        // esto se llama desde el OnDeadChanged del que acaba de morir, ese
+        // somos nosotros.
+        NetworkRoundState.Instance.DeclareRoundOver(slotIndex);
     }
 
     private void OnDeadChanged(bool previous, bool current)
     {
         if (!current) return;
 
+        EvaluateRoundEnd();
+
         // En NUESTRA máquina el muerto ya lo maneja GameOutroSequence (con
-        // cámara, panel y todo). Acá solo nos interesa el caso remoto: un
+        // cámara, animación y todo). Acá solo nos interesa el caso remoto: un
         // carril cuyo dueño perdió en otra pantalla y que, sin esto, seguiría
         // corriendo en la nuestra.
         if (IsMine) return;
@@ -249,7 +341,11 @@ public class PlayerSlot : NetworkBehaviour
         // corre nunca y sin esto el juego quedaría sin input. En ese caso el
         // slot 0 hace de "jugador local", que es justo el único carril que
         // RoundLaneSetup deja activo con la ronda de 1.
-        if (GameManager.Instance != null) GameManager.Instance.GameOver += OnLocalGameOver;
+        if (GameManager.Instance != null)
+        {
+            GameManager.Instance.GameOver += OnLocalGameOver;
+            GameManager.Instance.RoundOver += OnRoundOver;
+        }
 
         bool networked = NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
         if (networked) return; // con red manda ClaimIfMine, que ya corrió o va a correr
@@ -292,8 +388,13 @@ public class PlayerSlot : NetworkBehaviour
     // Unity, no un override.
     private void OnDestroy()
     {
+        all.Remove(this);
         UnsubscribeFromLocalInput();
-        if (GameManager.Instance != null) GameManager.Instance.GameOver -= OnLocalGameOver;
+        if (GameManager.Instance != null)
+        {
+            GameManager.Instance.GameOver -= OnLocalGameOver;
+            GameManager.Instance.RoundOver -= OnRoundOver;
+        }
         if (Local == this) Local = null; // static: sin esto queda apuntando a un objeto destruido
     }
 
