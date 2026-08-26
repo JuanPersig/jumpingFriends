@@ -149,6 +149,37 @@ public class ObstacleSpawner : MonoBehaviour
     // garantiza nada -- cualquier consumidor extra desalinearía la secuencia.
     private System.Random rng;
 
+    // DIAGNÓSTICO (Fase 3.1): junta los primeros obstáculos generados (tipo +
+    // Z) y los escupe en UNA sola línea. Comparar esa línea entre el log del
+    // host y el del cliente es la prueba directa de que los dos están viendo
+    // la misma partida: si coinciden, el azar sembrado y el reloj compartido
+    // funcionan; si difieren, cada uno está simulando lo suyo.
+    //
+    // Se puede borrar (junto con su llamada en SpawnObstacleAt) una vez que
+    // la Fase 3.2 ponga a cada jugador en su propio carril, porque a partir
+    // de ahí la diferencia se ve directamente en pantalla.
+    // 5 y no 10: sin saltar, el jugador muere a ~68 unidades y para entonces
+    // solo se generaron ~6 obstáculos, así que un umbral de 10 no se
+    // alcanzaba NUNCA y la línea no salía (pasó en la prueba del 25/8).
+    private const int FingerprintLength = 5;
+    private readonly System.Text.StringBuilder fingerprint = new System.Text.StringBuilder();
+    private int fingerprintCount;
+
+    private void LogSequenceFingerprint(ObstacleEntry entry, float z)
+    {
+        if (fingerprintCount >= FingerprintLength) return;
+
+        fingerprintCount++;
+        if (fingerprint.Length > 0) fingerprint.Append(" | ");
+        fingerprint.Append($"{entry.prefab.name}@{z:0.0}");
+
+        if (fingerprintCount == FingerprintLength)
+        {
+            Debug.Log($"[ObstacleSpawner] Huella de los primeros {FingerprintLength} obstáculos: " +
+                      fingerprint);
+        }
+    }
+
     // La semilla puede tardar en llegar del servidor, así que el generador se
     // crea en el primer uso real (el primer obstáculo se spawnea recién
     // después de la pantalla de carga, con la semilla ya replicada).
@@ -248,6 +279,8 @@ public class ObstacleSpawner : MonoBehaviour
         if (validObstaclePrefabs == null || validObstaclePrefabs.Count == 0) return;
 
         ObstacleEntry entry = PickNextEntry();
+        LogSequenceFingerprint(entry, z);
+
         foreach (Transform lane in lanePlayers)
         {
             if (lane == null) continue; // carril sin usar todavía (ver Lane Players en el Inspector)

@@ -103,16 +103,48 @@ public class NetworkRoundState : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
-        // Solo el servidor decide. Los clientes se limitan a leer las
-        // NetworkVariable de arriba, que Netcode ya les replica solo.
-        if (!IsServer) return;
+        if (IsServer)
+        {
+            obstacleSeed.Value = Random.Range(int.MinValue, int.MaxValue);
+            playerCount.Value = NetworkManager.Singleton.ConnectedClientsIds.Count;
+            gameplayStartTime.Value = NetworkManager.Singleton.ServerTime.Time + startDelaySeconds;
+        }
 
-        obstacleSeed.Value = Random.Range(int.MinValue, int.MaxValue);
-        playerCount.Value = NetworkManager.Singleton.ConnectedClientsIds.Count;
-        gameplayStartTime.Value = NetworkManager.Singleton.ServerTime.Time + startDelaySeconds;
+        // DIAGNÓSTICO (Fase 3.1): loguea el estado resuelto en TODOS los
+        // pares, no solo en el servidor. Es la única forma de comprobar que
+        // el cliente recibió exactamente la misma semilla y el mismo instante
+        // de arranque -- sin esto no hay manera de saber si el determinismo
+        // está enganchado o si cada uno está simulando lo suyo.
+        //
+        // En el servidor los valores ya están puestos arriba, así que loguea
+        // de una. En un cliente puede que todavía no hayan llegado, así que
+        // además se engancha al cambio.
+        LogResolvedStateOnce();
+        gameplayStartTime.OnValueChanged += OnStartTimeReplicated;
+    }
 
-        Debug.Log($"[NetworkRoundState] Ronda armada: {playerCount.Value} jugador(es), " +
-                  $"semilla {obstacleSeed.Value}, arranca en t={gameplayStartTime.Value:0.00}.");
+    public override void OnNetworkDespawn()
+    {
+        gameplayStartTime.OnValueChanged -= OnStartTimeReplicated;
+        base.OnNetworkDespawn();
+    }
+
+    private void OnStartTimeReplicated(double previous, double current)
+    {
+        LogResolvedStateOnce();
+    }
+
+    private bool hasLoggedResolvedState;
+
+    private void LogResolvedStateOnce()
+    {
+        if (hasLoggedResolvedState || !IsResolved) return;
+        hasLoggedResolvedState = true;
+
+        string role = IsServer ? "HOST" : "CLIENTE";
+        Debug.Log($"[NetworkRoundState] ({role}) Ronda armada: {PlayerCount} jugador(es), " +
+                  $"semilla {ObstacleSeed}, arranca en t={StartTime:0.000} " +
+                  $"(faltan {SecondsUntilStart:0.00}s).");
     }
 
     public override void OnDestroy()
