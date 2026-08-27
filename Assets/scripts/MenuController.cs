@@ -46,7 +46,22 @@ public class MenuController : MonoBehaviour
 
     private void Start()
     {
-        ShowMainPanel();
+        // NO SE MUESTRA EL PANEL PRINCIPAL SI VOLVIMOS A UNA SALA VIVA
+        // (bug del 26/8: al volver del Gameplay a la Sala de Espera quedaban
+        // los DOS paneles prendidos a la vez).
+        //
+        // La causa era una carrera, no un panel mal apagado: RoomFlowController
+        // abre la Sala de Espera en SU Start() y de paso apaga el principal,
+        // pero Unity NO garantiza el orden de los Start() entre GameObjects
+        // distintos -- corren en el mismo frame y gana el último. Acá ganaba
+        // este, que volvía a prender el principal encima.
+        //
+        // El arreglo es que este script se abstenga cuando no le toca decidir,
+        // en vez de intentar ordenar los Start(): así queda determinista corra
+        // en el orden que corra, y sin el parpadeo de un frame que tendría
+        // resolverlo esperando.
+        if (!MultiplayerConnectionManager.HasActiveSession) ShowMainPanel();
+
         UpdateNameLabel();
     }
 

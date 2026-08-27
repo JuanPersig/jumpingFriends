@@ -3422,6 +3422,7 @@ MonoBehaviour:
   - {fileID: 711223467}
   gameOverPanel: {fileID: 9199111}
   finalScoreText: {fileID: 314243333}
+  restartButton: {fileID: 1720717652}
 --- !u!4 &1242912825
 Transform:
   m_ObjectHideFlags: 0
@@ -4531,7 +4532,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ee5a4e271458b414da23cfe3e09493fc, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerInputProvider
-  listenPort: 5555
 --- !u!4 &1878825012
 Transform:
   m_ObjectHideFlags: 0

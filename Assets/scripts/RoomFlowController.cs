@@ -72,9 +72,48 @@ public class RoomFlowController : MonoBehaviour
              "cámara conectada.")]
     [SerializeField] private bool debugSkipCameraCheck;
 
-    private bool CameraReady =>
-        debugSkipCameraCheck ||
-        (NativePoseInputSource.Instance != null && NativePoseInputSource.Instance.IsCalibrated);
+    private bool CameraReady
+    {
+        get
+        {
+            bool calibrated = NativePoseInputSource.Instance != null &&
+                              NativePoseInputSource.Instance.IsCalibrated;
+            if (calibrated) return true;
+            if (!debugSkipCameraCheck) return false;
+
+            // Se avisa JUSTO acá -- en el único momento en que este flag tapa
+            // un problema de verdad -- y no al arrancar. Sin esto, un build
+            // compartido con el flag tildado deja entrar a la partida a
+            // alguien que después no puede saltar, y no queda rastro de por
+            // qué ni en la pantalla ni en el log.
+            Debug.LogWarning("[RoomFlowController] 'Debug Skip Camera Check' está TILDADO y la " +
+                              "cámara NO está calibrada -- se entra a la sala igual, pero el " +
+                              "jugador no va a poder saltar ni agacharse. Destildá ese campo " +
+                              "antes de compartir un build.");
+            return true;
+        }
+    }
+
+    // VOLVER DE UNA PARTIDA CON LA SALA TODAVÍA VIVA (26/8).
+    //
+    // Al terminar una ronda el host puede devolver a todos acá SIN abandonar
+    // la sesión (ver GameManager.ReturnToLobby), para poder jugar otra vez sin
+    // crear ni compartir un código nuevo. Cuando eso pasa esta escena se carga
+    // de cero, pero la sesión sigue viva en MultiplayerConnectionManager, que
+    // es persistente -- así que en vez del panel principal hay que entrar
+    // derecho a la Sala de Espera, con el código, los jugadores y el botón de
+    // "Empezar Partida" donde corresponde.
+    //
+    // Sin sesión activa (el arranque normal del juego) esto no hace nada y se
+    // ve el menú de siempre.
+    private void Start()
+    {
+        if (!MultiplayerConnectionManager.HasActiveSession) return;
+
+        Debug.Log("[RoomFlowController] Se volvió al menú con la sala todavía activa -- " +
+                  "entrando directo a la Sala de Espera.");
+        ShowLobbyWaitingRoom();
+    }
 
     // Enganchá esto al botón "Crear Sala" del panel principal.
     public async void OnCreateRoomPressed()

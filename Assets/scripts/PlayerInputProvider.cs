@@ -1,169 +1,44 @@
 using System;
-using System.Collections.Generic;
-using System.Net;
-using System.Net.Sockets;
-using System.Text;
-using System.Threading;
 using UnityEngine;
 
-// Formato del mensaje que manda el emisor de Python: {"state": "jumping"}
-[System.Serializable]
-public class StateMessage
-{
-    public string state;
-}
-
-// Capa intermedia entre "de dónde viene el input" (hoy: UDP local desde Python)
-// y "quién lo consume" (los minijuegos). Los minijuegos NUNCA deberían
-// escuchar UDP directamente: solo se suscriben a OnJump / OnCrouch / OnStand.
-// El día que se agregue multijugador online, esta clase es la única que
-// cambia (la fuente del evento pasa de ser UDP local a ser la red), y
-// ningún minijuego necesita tocarse.
+// Capa intermedia entre "de dónde viene el input" y "quién lo consume" (los
+// minijuegos). Los minijuegos NUNCA leen la cámara ni la red directamente:
+// solo se suscriben a OnJump / OnCrouch / OnStand. Así, el día que cambie la
+// fuente del input, esta clase es la única que se toca.
+//
+// HOY la fuente es NativePoseInputSource (detección de pose nativa, en C#,
+// leyendo landmarks de MediaPipe) -- llama a RaiseJump/RaiseCrouch/RaiseStand
+// y este componente reparte.
+//
+// ACÁ VIVÍA UN LISTENER UDP (sacado el 26/8). Era el camino original: un
+// proceso de Python aparte hacía la detección y mandaba {"state": "jumping"}
+// por UDP al puerto 5555. Cuando la detección se migró a nativo (14/8) ese
+// emisor dejó de existir, pero el receptor quedó: ~90 líneas con un
+// UdpClient, un hilo de fondo, una cola con lock y parseo de JSON, que ABRÍAN
+// UN SOCKET EN CADA ARRANQUE del juego sin que nadie mandara nunca un
+// paquete. Aparte de ser código muerto, era un choque potencial con el
+// firewall justo en la prueba por Internet.
+//
+// Si alguna vez hace falta volver a meter una fuente de input externa, el
+// lugar correcto sigue siendo este: un componente nuevo que llame a los
+// Raise* de abajo, sin que RunnerController ni PlayerSlot se enteren.
 public class PlayerInputProvider : Singleton<PlayerInputProvider>
 {
-    [Header("Configuración de red")]
-    [SerializeField] private int listenPort = 5555;
-
     public event Action OnJump;
     public event Action OnCrouch;
     public event Action OnStand;
 
-    // Permiten que OTRA fuente de input (ej: NativePoseInputSource, que lee
-    // landmarks de MediaPipe en vez de UDP) dispare los mismos eventos que
-    // consume el resto del juego, sin que RunnerController ni nadie más
-    // necesite enterarse de qué fuente está activa. No reemplazan el UDP de
-    // abajo -- ambas fuentes pueden convivir mientras se valida la migración.
+    // Los dispara la fuente de input activa (hoy NativePoseInputSource). El
+    // resto del juego escucha los eventos de arriba sin saber ni le importa
+    // quién los levantó.
     public void RaiseJump() => OnJump?.Invoke();
     public void RaiseCrouch() => OnCrouch?.Invoke();
     public void RaiseStand() => OnStand?.Invoke();
-
-    private UdpClient udpClient;
-    private Thread listenThread;
-    private volatile bool isListening = false;
-
-    // Los paquetes llegan en un hilo aparte; los guardamos acá y los
-    // procesamos en Update() (hilo principal), porque Unity no permite
-    // tocar el motor (ni disparar estos eventos con seguridad) desde
-    // un hilo que no sea el principal.
-    private readonly Queue<string> pendingMessages = new Queue<string>();
-    private readonly object queueLock = new object();
 
     protected override void Awake()
     {
         base.Awake();
         if (Instance != this) return; // instancia duplicada, ya se está autodestruyendo
         DontDestroyOnLoad(gameObject);
-    }
-
-    private void Start()
-    {
-        StartListening();
-    }
-
-    private void StartListening()
-    {
-        try
-        {
-            udpClient = new UdpClient(listenPort);
-            isListening = true;
-            listenThread = new Thread(ListenLoop) { IsBackground = true };
-            listenThread.Start();
-            Debug.Log($"[PlayerInputProvider] Escuchando UDP en puerto {listenPort}");
-        }
-        catch (Exception e)
-        {
-            Debug.LogError($"[PlayerInputProvider] No se pudo iniciar el listener UDP: {e.Message}");
-        }
-    }
-
-    private void ListenLoop()
-    {
-        IPEndPoint remoteEndPoint = new IPEndPoint(IPAddress.Any, listenPort);
-        while (isListening)
-        {
-            try
-            {
-                byte[] data = udpClient.Receive(ref remoteEndPoint);
-                string json = Encoding.UTF8.GetString(data);
-
-                lock (queueLock)
-                {
-                    pendingMessages.Enqueue(json);
-                }
-            }
-            catch (SocketException se)
-            {
-                // OJO: antes esto cortaba el loop siempre, asumiendo que
-                // SIEMPRE es el cierre esperado del socket. Si el problema
-                // es otra cosa (ej: firewall, permisos), nos quedábamos sin
-                // saberlo. Ahora lo logueamos igual, salvo que ya estemos
-                // cerrando (isListening == false), que ahí sí es el cierre normal.
-                if (isListening)
-                {
-                    Debug.LogError($"[PlayerInputProvider] SocketException inesperada: {se.SocketErrorCode} - {se.Message}");
-                }
-                break;
-            }
-            catch (Exception e)
-            {
-                Debug.LogWarning($"[PlayerInputProvider] Error recibiendo paquete: {e.GetType().Name} - {e.Message}");
-            }
-        }
-    }
-
-    private void Update()
-    {
-        string json = null;
-
-        lock (queueLock)
-        {
-            if (pendingMessages.Count > 0)
-            {
-                json = pendingMessages.Dequeue();
-            }
-        }
-
-        if (json != null)
-        {
-            ProcessMessage(json);
-        }
-    }
-
-    private void ProcessMessage(string json)
-    {
-        try
-        {
-            StateMessage message = JsonUtility.FromJson<StateMessage>(json);
-
-            switch (message.state)
-            {
-                case "jumping":
-                    OnJump?.Invoke();
-                    break;
-                case "crouching":
-                    OnCrouch?.Invoke();
-                    break;
-                case "standing":
-                    OnStand?.Invoke();
-                    break;
-                default:
-                    Debug.LogWarning($"[PlayerInputProvider] Estado desconocido: '{message.state}'");
-                    break;
-            }
-        }
-        catch (Exception e)
-        {
-            Debug.LogWarning($"[PlayerInputProvider] No se pudo parsear el mensaje '{json}': {e.Message}");
-        }
-    }
-
-    private void OnDestroy() => StopListening();
-    private void OnApplicationQuit() => StopListening();
-
-    private void StopListening()
-    {
-        isListening = false;
-        udpClient?.Close();
-        listenThread?.Join(200);
     }
 }

@@ -114,15 +114,11 @@ public class DifficultyManager : Singleton<DifficultyManager>
         return distanceWhileAccelerating + maxSpeed * (t - tCap);
     }
 
-    // Se mantiene público por compatibilidad: GameManager.RestartGame recarga
-    // la escena entera, así que hoy nadie más lo llama.
-    public void ResetDifficulty()
-    {
-        isRunning = true;
-        stoppedAtElapsed = 0f;
-        fallbackStartTime = -1.0;
-    }
-
+    // Acá vivía ResetDifficulty() (sacado el 26/8): no lo llamaba nadie.
+    // Quedó de cuando reiniciar no recargaba la escena entera; hoy
+    // GameManager.RestartGame() recarga Gameplay.unity completa, así que este
+    // componente se crea de cero con todos sus campos en su valor inicial y
+    // no hay nada que resetear a mano.
     public void Stop()
     {
         if (!isRunning) return;

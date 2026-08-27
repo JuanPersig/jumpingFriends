@@ -63,15 +63,28 @@ public class RoundLaneSetup : MonoBehaviour
     // fuente buena: GameManager.RoundPlayerCount.
 
     [Header("Cámara (parejas, solo importa con 4 jugadores)")]
-    [Tooltip("Índice DENTRO de Player Slots (0-3) que corresponde al jugador de ESTE cliente -- " +
-             "el mismo que ya tenés wireado como 'Target' en CameraFollow y como 'Player' en " +
-             "GameIntroSequence (mantenelos consistentes entre los tres). Con 4 jugadores, se usa " +
-             "para calcular la pareja (slot 0-1 -> Pareja 0, slot 2-3 -> Pareja 1) y elegir el " +
-             "centro de cámara correcto -- ver CameraFollow.CameraSettings.pairIndex. Cuando " +
-             "exista Netcode de verdad (Fase 3), este índice va a venir de qué carril te asignó " +
-             "la red, no de un valor fijo acá.")]
+    [Tooltip("RESPALDO para cuando NO hay red: qué índice de Player Slots (0-3) es el jugador " +
+             "local si abrís Gameplay.unity suelta desde el Editor. Con una sala activa este " +
+             "valor se IGNORA -- manda el carril que te asignó la red " +
+             "(PlayerSlot.Local.SlotIndex), igual que ya pasa con 'Target' de CameraFollow y con " +
+             "las referencias de GameOutroSequence. Con 4 jugadores el índice se usa para " +
+             "calcular la pareja (slot 0-1 -> Pareja 0, slot 2-3 -> Pareja 1) y elegir el centro " +
+             "de cámara correcto -- ver CameraFollow.CameraSettings.pairIndex.")]
     [SerializeField] private int localPlayerSlotIndex = 0;
     [SerializeField] private CameraFollow cameraFollow;
+
+    // El carril que te asignó la RED, o -1 mientras todavía no se sabe. Se
+    // resuelve solo escuchando PlayerSlot.LocalSlotResolved -- el mismo aviso
+    // que ya usan CameraFollow y GameOutroSequence para dejar de apuntar al
+    // slot 0.
+    //
+    // POR QUÉ NO ALCANZABA CON EL CAMPO DEL INSPECTOR (bug A1, cerrado el
+    // 26/8): 'localPlayerSlotIndex' quedaba clavado en 0 en TODAS las
+    // máquinas, así que pairIndex daba 0 para todos. Con 1/2/3 jugadores no
+    // se nota (los layouts de esos tamaños usan pairIndex 0 igual), pero con
+    // 4 todos verían la cámara de la Pareja 0 -- incluidos los carriles 2 y
+    // 3, que deberían ver la Pareja 1.
+    private int networkSlotIndex = -1;
 
     // Tope de espera del estado de ronda. Sin esto, un fallo de red dejaría
     // la escena congelada para siempre y sin ningún carril activo, en negro y
@@ -82,7 +95,44 @@ public class RoundLaneSetup : MonoBehaviour
 
     private void Awake()
     {
+        // El carril propio y el estado de ronda llegan por caminos SEPARADOS
+        // y sin coordinarse: la propiedad de los slots la reparte
+        // PlayerSlotAssigner, y la cantidad de jugadores viaja por
+        // NetworkRoundState. Puede llegar primero cualquiera de los dos, así
+        // que los dos caminos terminan llamando a ApplyCameraPair().
+        PlayerSlot.LocalSlotResolved += OnLocalSlotResolved;
+        if (PlayerSlot.Local != null) OnLocalSlotResolved(PlayerSlot.Local);
+
         StartCoroutine(SetupWhenRoundStateReady());
+    }
+
+    private void OnDestroy()
+    {
+        PlayerSlot.LocalSlotResolved -= OnLocalSlotResolved;
+    }
+
+    private void OnLocalSlotResolved(PlayerSlot slot)
+    {
+        if (slot == null) return;
+
+        networkSlotIndex = slot.SlotIndex;
+        ApplyCameraPair();
+    }
+
+    // 2 carriles por pareja (pensado para 4 jugadores: slot 0-1 = Pareja 0,
+    // slot 2-3 = Pareja 1). Con 1/2/3 jugadores esto da siempre pairIndex=0,
+    // que es justo el valor por defecto de las configuraciones existentes de
+    // CameraFollow -- no les cambia nada.
+    //
+    // Es idempotente a propósito: SetActivePairIndex() solo relee las tablas
+    // de CameraFollow y reescribe posición/rotación/FOV de la cámara hija,
+    // así que llamarlo dos veces (una por cada camino de arriba) no molesta.
+    private void ApplyCameraPair()
+    {
+        if (cameraFollow == null) return;
+
+        int slotIndex = networkSlotIndex >= 0 ? networkSlotIndex : localPlayerSlotIndex;
+        cameraFollow.SetActivePairIndex(slotIndex / 2);
     }
 
     private IEnumerator SetupWhenRoundStateReady()
@@ -179,16 +229,11 @@ public class RoundLaneSetup : MonoBehaviour
 
         if (obstacleSpawner != null) obstacleSpawner.SetLanePlayers(activeLanes);
 
-        // 2 carriles por pareja (pensado para 4 jugadores: slot 0-1 =
-        // Pareja 0, slot 2-3 = Pareja 1). Con 1/2/3 jugadores esto da
-        // siempre pairIndex=0 (localPlayerSlotIndex nunca pasa de 1 en esos
-        // casos), que es justo el valor por defecto de las configuraciones
-        // existentes de CameraFollow -- no les cambia nada.
-        if (cameraFollow != null)
-        {
-            int pairIndex = localPlayerSlotIndex / 2;
-            cameraFollow.SetActivePairIndex(pairIndex);
-        }
+        // Se vuelve a resolver acá (además de en OnLocalSlotResolved) porque
+        // CameraFollow elige su configuración cruzando pairIndex CON la
+        // cantidad de jugadores de la ronda -- y ese dato recién existe en
+        // este punto.
+        ApplyCameraPair();
     }
 
     // Mismo criterio de fallback que ChunkSpawner.ResolveChunkPrefabsForRound:

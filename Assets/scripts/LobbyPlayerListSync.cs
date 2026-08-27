@@ -64,7 +64,16 @@ public class LobbyPlayerListSync : MonoBehaviour
         session = MultiplayerConnectionManager.Instance?.CurrentSession;
         if (session == null) return;
 
+        // -= ANTES DE += Y NO ES COSMÉTICO (26/8). Desde que se puede volver
+        // del Gameplay a la Sala de Espera sin abandonar la sala, esto se
+        // llama otra vez sobre la MISMA sesión: al salir del menú nunca nos
+        // desuscribimos, a propósito (ver RoomFlowController.OnDestroy, que
+        // deja este objeto vivo porque Gameplay todavía necesita leer qué
+        // personaje eligió cada uno). Sin esto, cada vuelta sumaría un
+        // listener más y los eventos se procesarían N veces.
+        session.PlayerPropertiesChanged -= OnPlayerPropertiesChanged;
         session.PlayerPropertiesChanged += OnPlayerPropertiesChanged;
+        session.PlayerJoined -= OnPlayerJoined;
         session.PlayerJoined += OnPlayerJoined;
         // PlayerHasLeft (no el PlayerLeaving obsoleto, ni el PlayerLeft
         // deprecado) -- se dispara DESPUÉS de que session.Players ya se
@@ -72,6 +81,7 @@ public class LobbyPlayerListSync : MonoBehaviour
         // había ningún aviso directo que refrescara la lista a tiempo --
         // quedaba mostrando datos viejos (la skin de otro jugador) hasta
         // que algo más disparaba un refresh de casualidad.
+        session.PlayerHasLeft -= OnPlayerHasLeft;
         session.PlayerHasLeft += OnPlayerHasLeft;
 
         RefreshFromSession();

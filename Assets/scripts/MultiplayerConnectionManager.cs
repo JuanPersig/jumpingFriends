@@ -1,10 +1,12 @@
 using System;
+using System.Collections;
 using System.Threading.Tasks;
 using Unity.Netcode;
 using Unity.Services.Authentication;
 using Unity.Services.Core;
 using Unity.Services.Multiplayer;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 // Punto de entrada a Unity Gaming Services (Authentication + Multiplayer
 // Sessions -- el paquete unificado com.unity.services.multiplayer, que
@@ -57,6 +59,16 @@ public class MultiplayerConnectionManager : MonoBehaviour
     // como host (los clientes no generan código, lo reciben de afuera).
     public string SessionCode => CurrentSession?.Code ?? "";
 
+    // ¿Estamos en una sala ahora mismo? Estática y con el null-check adentro
+    // porque la preguntan los scripts del menú en su Start(), cuando todavía
+    // no saben si este componente existe (al arrancar el juego de cero no
+    // existe; volviendo de una partida sí, es persistente).
+    //
+    // Vive acá y no en cada uno para que MenuController y RoomFlowController
+    // pregunten LO MISMO: los dos deciden qué panel mostrar a partir de esta
+    // respuesta, y si cada uno la calculara por su cuenta podrían separarse.
+    public static bool HasActiveSession => Instance != null && Instance.CurrentSession != null;
+
     private bool servicesInitialized;
 
     private void Awake()
@@ -97,6 +109,15 @@ public class MultiplayerConnectionManager : MonoBehaviour
         if (!string.IsNullOrEmpty(profile))
         {
             AuthenticationService.Instance.SwitchProfile(profile);
+
+            // Deja rastro en el log: es un valor de PRUEBA que solo tiene
+            // sentido con dos instancias en la misma PC. En un build
+            // compartido, cada jugador está en su propia máquina y todos
+            // arrancarían con el MISMO perfil forzado -- que es justo lo que
+            // este campo existe para evitar.
+            Debug.LogWarning($"[MultiplayerConnectionManager] Usando el perfil de prueba " +
+                              $"'{profile}' (campo 'Debug Auth Profile'). Dejalo VACÍO antes de " +
+                              "compartir un build.");
         }
 
         if (!AuthenticationService.Instance.IsSignedIn)
@@ -115,6 +136,7 @@ public class MultiplayerConnectionManager : MonoBehaviour
     {
         try
         {
+            ResetSessionExitFlags();
             await EnsureServicesInitialized();
 
             SessionOptions options = new SessionOptions { MaxPlayers = maxPlayers }.WithRelayNetwork();
@@ -136,6 +158,7 @@ public class MultiplayerConnectionManager : MonoBehaviour
     {
         try
         {
+            ResetSessionExitFlags();
             await EnsureServicesInitialized();
 
             CurrentSession = await MultiplayerService.Instance.JoinSessionByCodeAsync(code);
@@ -161,6 +184,12 @@ public class MultiplayerConnectionManager : MonoBehaviour
     {
         if (CurrentSession == null) return;
 
+        // Avisa que la desconexión que viene es NUESTRA y a propósito, para
+        // que el rescate de más abajo (ReturnToMainMenuOnDisconnect) no la
+        // confunda con "me echaron" y mande a cargar el Menú por segunda vez
+        // encima de quien ya lo está haciendo.
+        leavingOnPurpose = true;
+
         try
         {
             await CurrentSession.LeaveAsync();
@@ -178,6 +207,83 @@ public class MultiplayerConnectionManager : MonoBehaviour
             CurrentSession = null;
         }
     }
+
+    // --- Rescate: te quedaste sin sesión en medio de la partida ---
+    //
+    // El caso típico es el host tocando "Menú" al terminar la ronda: cierra
+    // la sala y los demás quedan en Gameplay.unity, desconectados, con el
+    // mundo congelado y sin ningún camino de salida (bug A2, 26/8). También
+    // cubre una caída de conexión de verdad.
+    //
+    // Vive acá y no en GameManager porque este componente es persistente:
+    // sigue vivo durante el cambio de escena, que es justo cuando hace falta.
+    //
+    // OJO CON EL CICLO DE VIDA DE ESTAS DOS BANDERAS: NO se apagan al
+    // terminar de salir, sino recién cuando se crea o se entra a una sesión
+    // NUEVA (ver ResetSessionExitFlags). Apagarlas antes abría una carrera
+    // real: Netcode dispara su OnClientDisconnectCallback DESPUÉS de que
+    // LeaveAsync terminó, así que para cuando llegaba el aviso la bandera ya
+    // estaba en false y el rescate salía a cargar el Menú encima de una
+    // salida que ya estaba en curso.
+    private bool leavingOnPurpose;
+    private bool returningToMainMenu;
+
+    private void ResetSessionExitFlags()
+    {
+        leavingOnPurpose = false;
+        returningToMainMenu = false;
+    }
+
+    [Tooltip("Nombre de la escena del menú principal -- tiene que estar en Build Settings. Se " +
+             "usa para volver ahí si te quedaste sin sesión en medio de la partida, y para saber " +
+             "cuándo NO hace falta (si ya estás en el menú, no se toca nada).")]
+    [SerializeField] private string mainMenuSceneName = "MainMenu";
+
+    private void OnDisconnectedFromSession(ulong clientId)
+    {
+        if (NetworkManager.Singleton == null) return;
+
+        // ¿Es MI desconexión? El host también recibe este callback por cada
+        // cliente que se va, y en ese caso no hay nada que rescatar.
+        if (clientId != NetworkManager.Singleton.LocalClientId) return;
+
+        if (leavingOnPurpose || returningToMainMenu) return;
+
+        // En el menú esto ya lo maneja RoomFlowController (Abandonar Sala),
+        // que además sabe qué panel mostrar. Acá solo nos interesa la
+        // desconexión durante la partida.
+        if (SceneManager.GetActiveScene().name == mainMenuSceneName) return;
+
+        string reason = NetworkManager.Singleton.DisconnectReason;
+        Debug.LogWarning("[MultiplayerConnectionManager] Te quedaste sin sesión en medio de la " +
+                          $"partida (motivo: '{reason}') -- volviendo al menú principal.");
+
+        returningToMainMenu = true;
+        StartCoroutine(ReturnToMainMenuOnDisconnect());
+    }
+
+    private IEnumerator ReturnToMainMenuOnDisconnect()
+    {
+        // La sesión remota ya no existe, pero la referencia local sí: sin
+        // soltarla, el Menú creería que seguímos en una sala. LeaveSession()
+        // atrapa el error esperable de "salir de algo que ya no está" y deja
+        // CurrentSession en null igual.
+        Task leaving = LeaveSession();
+
+        float waited = 0f;
+        while (!leaving.IsCompleted && waited < DisconnectCleanupTimeoutSeconds)
+        {
+            waited += Time.unscaledDeltaTime;
+            yield return null;
+        }
+
+        SceneManager.LoadScene(mainMenuSceneName);
+    }
+
+    // Tope de espera (guardarraíl 8 del proyecto: nada de "esperar hasta que"
+    // sin salida). Si la limpieza no termina, se vuelve al menú igual: mejor
+    // eso que dejar al jugador mirando una partida muerta.
+    private const float DisconnectCleanupTimeoutSeconds = 3f;
 
     // DIAGNÓSTICO (25/8, Fase 3): el cliente se queda colgado en la Sala de
     // Espera cuando el host aprieta "Empezar Partida" -- para saber en qué
@@ -232,6 +338,10 @@ public class MultiplayerConnectionManager : MonoBehaviour
         string reason = NetworkManager.Singleton != null ? NetworkManager.Singleton.DisconnectReason : "";
         Debug.LogWarning($"[MultiplayerConnectionManager] OnClientDisconnectCallback: clientId={clientId} " +
                           $"DisconnectReason='{reason}'");
+
+        // Además de loguear, actúa: si el desconectado sos VOS y estás en
+        // medio de una partida, te saca de ahí (ver OnDisconnectedFromSession).
+        OnDisconnectedFromSession(clientId);
     }
 
     private void OnNetcodeTransportFailureDiagnostics()

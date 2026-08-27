@@ -57,7 +57,12 @@ public class RunnerController : MonoBehaviour
     [Header("Animación")]
     [Tooltip("Opcional: si no se asigna, el personaje se mueve igual, solo que sin animar.")]
     [SerializeField] private Animator animator;
-    [SerializeField] private string runClipName = "Jog_Fwd_Loop";
+    // OJO CON ESTE DEFAULT: tiene que ser un estado que EXISTA en
+    // 'Player Animator.controller'. Estuvo en "Jog_Fwd_Loop" hasta el 26/8,
+    // que no existe ahí -- no se veía porque la escena pisa el valor con
+    // "Sprint_Loop", pero cualquier RunnerController nuevo arrancaba con un
+    // clip inexistente y sin ningún aviso.
+    [SerializeField] private string runClipName = "Sprint_Loop";
     [SerializeField] private string jumpClipName = "Jump_Loop";
     [SerializeField] private string crouchClipName = "Crouch_Fwd_Loop";
     [SerializeField] private float animationCrossFade = 0.1f;

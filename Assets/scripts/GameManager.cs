@@ -1,3 +1,6 @@
+using System.Collections;
+using System.Threading.Tasks;
+using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -139,21 +142,161 @@ public class GameManager : Singleton<GameManager>
         RoundOver?.Invoke();
     }
 
+    // ¿Esta partida se está jugando EN RED? Lo miran los dos botones de
+    // abajo para no romperle la sesión a los demás, y UIManager para decidir
+    // si muestra o no el botón "Reiniciar".
+    //
+    // Se pregunta directo al NetworkManager y NO a NetworkRoundState.
+    // IsNetworked (que hace exactamente lo mismo) a propósito: ese objeto
+    // vive en Gameplay.unity y se descarga con la escena, así que en medio
+    // de una vuelta al menú puede no estar. El NetworkManager es
+    // persistente.
+    public static bool IsNetworkedSession =>
+        NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
+
+    // ¿Somos el host? Solo él puede mover a TODOS de escena
+    // (NetworkManager.SceneManager.LoadScene es una operación de servidor),
+    // así que es él quien decide cuándo se vuelve a la sala.
+    public static bool IsNetworkHost =>
+        NetworkManager.Singleton != null && NetworkManager.Singleton.IsHost;
+
+    // "Volver a la sala": termina la partida pero MANTIENE la sesión viva,
+    // con todos sus jugadores, y devuelve a todo el mundo a la Sala de
+    // Espera. Desde ahí el host arranca otra ronda con "Empezar Partida",
+    // sin que nadie tenga que crear ni compartir un código nuevo.
+    //
+    // Es lo contrario de ReturnToMainMenu(), que SÍ abandona la sala. Los dos
+    // caminos conviven a propósito: este es "juguemos otra", aquel es "me voy".
+    //
+    // TIENE QUE LLAMARLO EL HOST. Un cliente no puede volver por su cuenta:
+    // se saldría de la sincronización de escenas de Netcode. Por eso a los
+    // demás ni se les muestra el botón (ver UIManager) -- esperan al host,
+    // igual que esperan su "Empezar Partida" en la Sala de Espera.
+    public void ReturnToLobby()
+    {
+        if (!IsNetworkHost)
+        {
+            Debug.LogWarning("[GameManager] 'Volver a la sala' solo puede dispararlo el host -- " +
+                              "mover a todos de escena es una operación de servidor.");
+            return;
+        }
+
+        // Se loguea el status por la misma razón que en
+        // RoomFlowController.OnStartGamePressed: LoadScene puede RECHAZAR el
+        // pedido sin tirar excepción, y esa falla silenciosa ya costó una
+        // cacería entera el 25/8.
+        SceneEventProgressStatus status =
+            NetworkManager.Singleton.SceneManager.LoadScene("MainMenu", LoadSceneMode.Single);
+        Debug.Log($"[GameManager] Volviendo a la sala (la sesión sigue viva) -> {status}");
+    }
+
+    // "Reiniciar" existe solo para la partida de UN jugador.
+    //
+    // En red no puede reiniciar uno solo: recargar la escena por tu cuenta
+    // con SceneManager.LoadScene te saca de la sincronización de escenas de
+    // Netcode (y si sos el host, además dejás a los clientes en una escena
+    // que ya nadie está simulando). Un reinicio sincronizado para toda la
+    // sala -- que tendría que decidir el host y disparar con
+    // NetworkManager.SceneManager.LoadScene -- es una feature aparte; hasta
+    // que exista, en red el único camino de salida es "Menú".
+    //
+    // UIManager ya oculta el botón cuando hay red; este chequeo es la red de
+    // seguridad por si quedó visible (campo sin wirear) o si alguien llama a
+    // esto desde otro lado.
     public void RestartGame()
     {
+        if (IsNetworkedSession)
+        {
+            Debug.LogWarning("[GameManager] 'Reiniciar' no está disponible en una partida en red " +
+                              "-- recargar la escena por tu cuenta rompería la sesión. Usá " +
+                              "'Menú' para volver al menú principal.");
+            return;
+        }
+
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
 
     // Público para el botón "Menú" del panel de Game Over (ver
-    // UIManager.OnMainMenuButtonPressed). Por nombre, no por buildIndex --
-    // a diferencia de RestartGame (que siempre tiene que ser "la escena
-    // actual", sea cual sea), acá el destino es fijo, así que el nombre es
-    // más explícito y no depende de qué posición tenga en Build Settings.
+    // UIManager.OnMainMenuButtonPressed).
+    //
+    // ABANDONA LA SESIÓN ANTES DE CARGAR LA ESCENA (bug A2, cerrado el 26/8).
+    // Antes esto era un SceneManager.LoadScene("MainMenu") pelado, sin pasar
+    // por Netcode: la sesión seguía viva, el host dejaba a los demás en una
+    // escena que abandonó sin avisar, y volvías al Menú técnicamente
+    // conectado/hosteando de fondo. Mismo orden que ya usa
+    // RoomFlowController.OnLeaveRoomPressed: primero soltar la sala de
+    // verdad, recién después mostrar el menú.
+    //
+    // Sin red (Gameplay.unity abierta suelta) no hay
+    // MultiplayerConnectionManager y esto es exactamente el LoadScene de
+    // siempre, un frame más tarde.
+    //
     // Los singletons persistentes (NativePoseInputSource, PlayerInputProvider,
-    // CharacterSelection) sobreviven el cambio -- no hace falta recalibrar
-    // ni volver a elegir personaje al volver a jugar.
+    // CharacterSelection) sobreviven el cambio -- no hace falta recalibrar ni
+    // volver a elegir personaje al volver a jugar.
     public void ReturnToMainMenu()
     {
+        if (returningToMainMenu) return; // doble click en el botón
+        returningToMainMenu = true;
+        returnStartedAt = Time.realtimeSinceStartup;
+
+        StartCoroutine(LeaveSessionThenLoadMainMenu());
+    }
+
+    private bool returningToMainMenu;
+    private float returnStartedAt;
+
+    // Topes de espera. Guardarraíl 8 del proyecto: jamás un "esperar hasta
+    // que" sin salida -- si el servicio no responde, se vuelve al menú igual
+    // en vez de dejar al jugador clavado en el panel de Game Over.
+    private const float LeaveSessionTimeoutSeconds = 5f;
+    private const float NetcodeShutdownTimeoutSeconds = 2f;
+
+    private IEnumerator LeaveSessionThenLoadMainMenu()
+    {
+        if (MultiplayerConnectionManager.Instance != null)
+        {
+            // LeaveSession() nunca tira (atrapa adentro y siempre suelta
+            // CurrentSession), así que acá solo hay que esperar a que
+            // termine -- no hace falta mirar el resultado.
+            Task leaving = MultiplayerConnectionManager.Instance.LeaveSession();
+
+            float waited = 0f;
+            while (!leaving.IsCompleted && waited < LeaveSessionTimeoutSeconds)
+            {
+                waited += Time.unscaledDeltaTime;
+                yield return null;
+            }
+
+            if (!leaving.IsCompleted)
+            {
+                Debug.LogWarning($"[GameManager] Abandonar la sala tardó más de " +
+                                  $"{LeaveSessionTimeoutSeconds}s -- se vuelve al menú igual.");
+            }
+        }
+
+        // Netcode apaga de verdad recién al final del frame
+        // (ShutdownInProgress). Cargar la escena en el mismo instante se
+        // pisaría con ese apagado, así que se le da el margen que pida.
+        float shutdownWait = 0f;
+        while (NetworkManager.Singleton != null && NetworkManager.Singleton.ShutdownInProgress &&
+               shutdownWait < NetcodeShutdownTimeoutSeconds)
+        {
+            shutdownWait += Time.unscaledDeltaTime;
+            yield return null;
+        }
+
+        // DIAGNÓSTICO (26/8): en la primera prueba no quedó rastro de si esta
+        // línea llegó a correr o si se cortó antes -- el log mostraba "Sala
+        // abandonada" y después nada. Con esto, la próxima vez se sabe de una,
+        // y el total dice cuánto tardó la vuelta completa. Sacar cuando el
+        // camino esté confirmado.
+        Debug.Log($"[GameManager] Volviendo al menú principal " +
+                  $"({Time.realtimeSinceStartup - returnStartedAt:0.00}s desde el click).");
+
+        // Por nombre, no por buildIndex -- acá el destino es fijo, así que el
+        // nombre es más explícito y no depende de qué posición tenga en Build
+        // Settings.
         SceneManager.LoadScene("MainMenu");
     }
 }
