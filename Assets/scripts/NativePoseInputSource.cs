@@ -64,6 +64,15 @@ public class NativePoseInputSource : MonoBehaviour
     [SerializeField] private string modelFileName = "pose_landmarker_lite.bytes";
 
     [Header("Webcam")]
+    [Tooltip("Qué cámara usar, por nombre. Coincidencia PARCIAL y sin distinguir mayúsculas: " +
+             "alcanza con 'obs' para agarrar 'OBS Virtual Camera'. Vacío = la primera que " +
+             "encuentre, que es lo normal. Sirve para probar dos instancias en la misma PC: la " +
+             "webcam física no se puede compartir, así que a una instancia se le pone la cámara " +
+             "real y a la otra la virtual de OBS (idealmente reproduciendo un video grabado de " +
+             "alguien saltando, no la misma webcam, o las dos verían lo mismo). Si el nombre no " +
+             "coincide con ninguna, avisa por consola y lista las disponibles.")]
+    [SerializeField] private string preferredCameraName = "";
+
     [SerializeField] private int requestedWidth = 640;
     [SerializeField] private int requestedHeight = 480;
     [SerializeField] private int requestedFps = 30;
@@ -205,6 +214,47 @@ public class NativePoseInputSource : MonoBehaviour
         _detector.OnStand += () => PlayerInputProvider.Instance?.RaiseStand();
     }
 
+    // Elige QUÉ cámara usar, en vez de tomar siempre la primera.
+    //
+    // Para qué sirve: dos instancias del juego en la misma PC no pueden
+    // compartir la webcam física -- la segunda falla con "Could not start
+    // graph" y se queda sin detección. Poniéndole a una un dispositivo
+    // distinto (típicamente OBS Virtual Camera, que Unity ve como una cámara
+    // más), las dos tienen su propia fuente y se puede probar multijugador
+    // de verdad sin un amigo del otro lado.
+    //
+    // El truco completo: que OBS reproduzca un VIDEO GRABADO de alguien
+    // saltando y agachándose. Si OBS capturara la misma webcam física, las
+    // dos instancias verían a la misma persona haciendo lo mismo.
+    //
+    // Coincidencia parcial y sin distinguir mayúsculas: alcanza con escribir
+    // "obs" para que agarre "OBS Virtual Camera". Vacío = la primera cámara,
+    // que es el comportamiento de siempre.
+    private string ResolveCameraName()
+    {
+        WebCamDevice[] devices = WebCamTexture.devices;
+
+        if (!string.IsNullOrWhiteSpace(preferredCameraName))
+        {
+            string wanted = preferredCameraName.Trim();
+            foreach (WebCamDevice device in devices)
+            {
+                if (device.name.IndexOf(wanted, System.StringComparison.OrdinalIgnoreCase) < 0) continue;
+                Debug.Log($"[NativePoseInputSource] Usando la cámara '{device.name}' (pedida: '{wanted}').");
+                return device.name;
+            }
+
+            // No encontrarla es un problema real y silencioso: seguirías
+            // jugando con la cámara equivocada sin enterarte, así que se
+            // listan las que SÍ hay para poder corregir el nombre.
+            string available = string.Join(", ", System.Array.ConvertAll(devices, d => $"'{d.name}'"));
+            Debug.LogWarning($"[NativePoseInputSource] No hay ninguna cámara que coincida con " +
+                              $"'{wanted}' -- usando '{devices[0].name}'. Disponibles: {available}");
+        }
+
+        return devices[0].name;
+    }
+
     private IEnumerator Start()
     {
         if (WebCamTexture.devices.Length == 0)
@@ -214,7 +264,8 @@ public class NativePoseInputSource : MonoBehaviour
             yield break;
         }
 
-        _webCamTexture = new WebCamTexture(WebCamTexture.devices[0].name, requestedWidth, requestedHeight, requestedFps);
+        string cameraName = ResolveCameraName();
+        _webCamTexture = new WebCamTexture(cameraName, requestedWidth, requestedHeight, requestedFps);
         _webCamTexture.Play();
 
         // OJO -- antes esto era un WaitUntil SIN límite de tiempo: si la
